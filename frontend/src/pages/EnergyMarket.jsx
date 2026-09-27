@@ -1,15 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { ethers } from 'ethers';
 import TopBar from '../components/TopBar';
 import { useWeb3 } from '../context/Web3Context';
 import { db, onValue, ref, push } from '../firebase';
+import {
+  ETHERSCAN_URL, getSepoliaProvider, getContracts, getSignerContracts, orderCostWei, recordTransaction,
+} from '../contracts';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
 import { TrendingUp, Zap, RefreshCw, CheckCircle, Cpu } from 'lucide-react';
 
 // ── Mock Data ─────────────────────────────────────────────────────────────────
-function r(a, b) { return +(a + Math.random() * (b - a)).toFixed(3); }
-
 function genPriceHistory() {
   let p = 0.056;
   return Array.from({ length: 20 }, (_, i) => {
@@ -18,14 +20,6 @@ function genPriceHistory() {
   });
 }
 
-const recentTrades = [
-  { price: 0.0572, amount: 145, side: 'buy',  time: '12:34:05' },
-  { price: 0.0568, amount: 220, side: 'sell', time: '12:33:41' },
-  { price: 0.0575, amount: 80,  side: 'buy',  time: '12:33:10' },
-  { price: 0.0562, amount: 310, side: 'sell', time: '12:32:55' },
-  { price: 0.0580, amount: 60,  side: 'buy',  time: '12:32:20' },
-];
-
 const aiSuggest = {
   action: 'SELL',
   price: '0.0575',
@@ -33,44 +27,68 @@ const aiSuggest = {
   reason: 'Sản lượng dư thừa dự kiến tăng 18% trong 2h tới. Giá thị trường đang ở đỉnh cục bộ.',
 };
 
+// Lệnh trên Firebase -> dòng sổ lệnh. Bỏ lệnh đã khớp ("filled") và lệnh có địa chỉ ví không hợp lệ (không lên chain được)
+function toOrderRows(raw, type) {
+  const prefix = type === 'bid' ? 'B' : 'A';
+  return Object.entries(raw || {})
+    .filter(([, o]) => o && o.status === 'open' && ethers.isAddress(o.addr || ''))
+    .map(([key, o]) => ({
+      id: `${prefix}-${key}`, type,
+      price: o.price_ETH, amount: o.amount_kWh,
+      total: +(o.price_ETH * o.amount_kWh).toFixed(6),
+      addr: o.source === 'iot' ? '⚡ IoT Node' : `${o.addr.slice(0, 8)}...${o.addr.slice(-4)}`,
+    }))
+    // Mua: giá cao nhất lên đầu; Bán: giá thấp nhất lên đầu (dùng cho Mid Price / Spread)
+    .sort((a, b) => (type === 'bid' ? b.price - a.price : a.price - b.price));
+}
+
+function formatCountdown(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
 export default function EnergyMarket() {
-  const { isConnected, connect, account } = useWeb3();
+  const { isConnected, connect, account, refreshBalance } = useWeb3();
   const [bids, setBids] = useState([]);
   const [asks, setAsks] = useState([]);
+  const [trades, setTrades] = useState([]);
+  const [session, setSession] = useState(null); // { id, deadline } đọc từ contract
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const [priceHistory, setPriceHistory] = useState(genPriceHistory);
   const [orderType, setOrderType] = useState('buy');
   const [price, setPrice] = useState('0.0575');
   const [amount, setAmount] = useState('');
   const [toast, setToast] = useState(null);
 
+  // ── Phiên đấu giá hiện tại trên smart contract ─────────────────────────
+  const loadSession = useCallback(async () => {
+    const provider = await getSepoliaProvider();
+    if (!provider) return setSession(null);
+    const { market } = getContracts(provider);
+    const [id, deadline] = await Promise.all([market.currentSession(), market.sessionDeadline()]);
+    setSession({ id: Number(id), deadline: Number(deadline) });
+  }, []);
+
+  useEffect(() => {
+    loadSession().catch(console.error);
+    const sessionId = setInterval(() => loadSession().catch(console.error), 5000);
+    const clockId = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
+    return () => { clearInterval(sessionId); clearInterval(clockId); };
+  }, [loadSession, isConnected]);
+
   // ── Firebase listeners ──────────────────────────────────────────────────
   useEffect(() => {
-    // Listen market/bids
-    const unsubBids = onValue(ref(db, 'market/bids'), snap => {
-      if (!snap.exists()) return;
-      const raw = snap.val();
-      const arr = Array.isArray(raw) ? raw : Object.values(raw);
-      setBids(arr.map((o, i) => ({
-        id: `B${i}`, type: 'bid',
-        price: o.price_ETH, amount: o.amount_kWh,
-        total: +(o.price_ETH * o.amount_kWh).toFixed(4),
-        addr: o.addr ? `${o.addr.slice(0,8)}...${o.addr.slice(-4)}` : '0x????',
-        time: o.timestamp ? `${Math.round((Date.now()/1000 - o.timestamp)/60)}m ago` : '--',
-      })));
-    });
+    const unsubBids = onValue(ref(db, 'market/bids'), snap => setBids(toOrderRows(snap.val(), 'bid')));
+    const unsubAsks = onValue(ref(db, 'market/asks'), snap => setAsks(toOrderRows(snap.val(), 'ask')));
 
-    // Listen market/asks
-    const unsubAsks = onValue(ref(db, 'market/asks'), snap => {
-      if (!snap.exists()) return;
-      const raw = snap.val();
-      const arr = Array.isArray(raw) ? raw : Object.values(raw);
-      setAsks(arr.map((o, i) => ({
-        id: `A${i}`, type: 'ask',
-        price: o.price_ETH, amount: o.amount_kWh,
-        total: +(o.price_ETH * o.amount_kWh).toFixed(4),
-        addr: o.addr ? `${o.addr.slice(0,8)}...${o.addr.slice(-4)}` : '0x????',
-        time: o.timestamp ? `${Math.round((Date.now()/1000 - o.timestamp)/60)}m ago` : '--',
-      })));
+    // Kết quả khớp lệnh on-chain do backend ghi: mỗi lần khớp có 1 bản ghi "sell" kèm số phiên
+    const unsubTrades = onValue(ref(db, 'transactions'), snap => {
+      const rows = Object.values(snap.val() || {})
+        .filter(tx => tx && tx.type === 'sell' && tx.session != null)
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .slice(0, 5);
+      setTrades(rows);
     });
 
     // Evolve price chart locally
@@ -82,12 +100,12 @@ export default function EnergyMarket() {
       });
     }, 4000);
 
-    return () => { unsubBids(); unsubAsks(); clearInterval(priceId); };
+    return () => { unsubBids(); unsubAsks(); unsubTrades(); clearInterval(priceId); };
   }, []);
 
-  const showToast = (msg, type = 'success') => {
+  const showToast = (msg, type = 'success', ms = 3000) => {
     setToast({ msg, type });
-    setTimeout(() => setToast(null), 3000);
+    setTimeout(() => setToast(null), ms);
   };
 
   const handleOrder = async () => {
@@ -95,59 +113,59 @@ export default function EnergyMarket() {
     if (!amount || isNaN(+amount) || +amount <= 0) {
       showToast('Nhập số lượng hợp lệ', 'error'); return;
     }
-    
+    if (!price || isNaN(+price) || +price <= 0) {
+      showToast('Nhập giá hợp lệ', 'error'); return;
+    }
+
     try {
-      showToast('⏳ Đang chờ xác nhận từ MetaMask...', 'info');
-      // Tạo giao dịch On-chain thực tế qua MetaMask (gửi 0 ETH để lấy Tx Hash trên Sepolia)
-      if (!window.ethereum) throw new Error("Không tìm thấy MetaMask");
-      
-      const { ethers } = await import('ethers');
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
-      
-      const tx = await signer.sendTransaction({
-        to: account,
-        value: 0 // Gửi 0 ETH làm dummy transaction mô phỏng gọi Smart Contract
-      });
-      
-      showToast('⏳ Đang chờ xác nhận giao dịch trên mạng lưới (Block)...', 'info');
-      await tx.wait(); // Đợi tx được đưa vào block
+      // Lệnh mua: contract trừ tiền từ ETH ký quỹ khi khớp, nên nạp đủ trước khi đặt lệnh
+      if (orderType === 'buy') {
+        const { market } = await getSignerContracts();
+        const cost = orderCostWei(price, amount);
+        const deposited = await market.balances(account);
+        if (deposited < cost) {
+          const missing = cost - deposited;
+          showToast(`⏳ Ký quỹ còn thiếu ${ethers.formatEther(missing)} ETH. Xác nhận nạp trong MetaMask...`, 'info', 60000);
+          const tx = await market.deposit({ value: missing });
+          showToast('⏳ Đang chờ giao dịch nạp ký quỹ vào block...', 'info', 60000);
+          const receipt = await tx.wait();
+          await recordTransaction(receipt, {
+            type: 'transfer',
+            value_ETH: -Number(ethers.formatEther(missing)),
+            addr: account,
+            note: 'Nạp ký quỹ vào sàn',
+          });
+          refreshBalance().catch(console.error);
+        }
+      }
 
-      const timestamp = Math.floor(Date.now() / 1000);
-
-      // 1. Push lệnh lên Firebase Market
+      // Backend oracle đọc lệnh này và gửi lên smart contract (submitManualBid / submitManualOffer)
       await push(ref(db, `market/${orderType === 'buy' ? 'bids' : 'asks'}`), {
         type: orderType === 'buy' ? 'bid' : 'ask',
         price_ETH: parseFloat(price),
         amount_kWh: parseFloat(amount),
         addr: account,
         status: 'open',
-        timestamp: timestamp,
-      });
-
-      // 2. Push giao dịch vào Transactions để theo dõi qua Etherscan
-      await push(ref(db, 'transactions'), {
-        hash: tx.hash,
-        type: orderType === 'buy' ? 'buy' : 'sell',
-        amount_kWh: parseFloat(amount),
-        value_ETH: orderType === 'buy' ? -parseFloat(price) : parseFloat(price),
-        timestamp: timestamp,
-        status: 'success'
+        timestamp: Math.floor(Date.now() / 1000),
       });
 
       showToast(
-        `✅ Lệnh ${orderType === 'buy' ? 'MUA' : 'BÁN'} ${amount} kWh @ ${price} ETH đã thành công! Hash: ${tx.hash.slice(0,10)}...`,
-        'success'
+        `✅ Đã đặt lệnh ${orderType === 'buy' ? 'MUA' : 'BÁN'} ${amount} kWh @ ${price} ETH. ` +
+        `Lệnh sẽ được đưa lên smart contract và khớp khi hết phiên${session ? ` #${session.id}` : ''}.`,
+        'success', 6000
       );
     } catch (e) {
       console.error(e);
-      showToast('❌ Lỗi: ' + (e.reason || e.message), 'error');
+      showToast('❌ Lỗi: ' + (e.shortMessage || e.reason || e.message), 'error', 6000);
     }
     setAmount('');
   };
 
-  const midPrice = ((+bids[0]?.price + +asks[0]?.price) / 2).toFixed(5);
-  const spread   = (asks[0]?.price - bids[0]?.price).toFixed(5);
+  const midPrice = bids.length && asks.length ? ((+bids[0].price + +asks[0].price) / 2).toFixed(5) : '--';
+  const spread   = bids.length && asks.length ? (asks[0].price - bids[0].price).toFixed(5) : '--';
+  const secondsLeft = session ? session.deadline - now : null;
+
+  const toastColor = toast?.type === 'success' ? '#10b981' : toast?.type === 'info' ? '#3b82f6' : '#ef4444';
 
   return (
     <div className="page-enter">
@@ -155,9 +173,9 @@ export default function EnergyMarket() {
       {toast && (
         <div style={{
           position: 'fixed', top: 24, right: 24, zIndex: 999,
-          background: toast.type === 'success' ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
-          border: `1px solid ${toast.type === 'success' ? '#10b981' : '#ef4444'}`,
-          color: toast.type === 'success' ? '#10b981' : '#ef4444',
+          background: `${toastColor}26`,
+          border: `1px solid ${toastColor}`,
+          color: toastColor,
           borderRadius: 12, padding: '0.875rem 1.25rem',
           backdropFilter: 'blur(12px)',
           animation: 'fadeInUp 0.3s ease',
@@ -176,8 +194,16 @@ export default function EnergyMarket() {
           <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#fff' }}>{midPrice} <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>ETH/kWh</span></div>
         </div>
         <div><div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 2 }}>Spread</div><div style={{ color: 'var(--accent)', fontWeight: 600 }}>{spread} ETH</div></div>
-        <div><div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 2 }}>24h Volume</div><div style={{ color: 'var(--primary)', fontWeight: 600 }}>14,820 kWh</div></div>
-        <div><div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 2 }}>24h Trades</div><div style={{ color: 'var(--secondary)', fontWeight: 600 }}>312 tx</div></div>
+        <div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 2 }}>Phiên đấu giá</div>
+          <div style={{ color: 'var(--primary)', fontWeight: 600 }}>{session ? `#${session.id}` : '--'}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 2 }}>Khớp lệnh sau</div>
+          <div style={{ color: 'var(--secondary)', fontWeight: 600 }}>
+            {secondsLeft === null ? 'Kết nối MetaMask (Sepolia)' : secondsLeft > 0 ? formatCountdown(secondsLeft) : 'Đang khớp lệnh...'}
+          </div>
+        </div>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, color: 'var(--primary)', fontSize: '0.85rem' }}>
           <div className="dot green" />Live Matching Engine
         </div>
@@ -189,7 +215,7 @@ export default function EnergyMarket() {
         <div className="card">
           <div className="chart-title">
             <div className="chart-title-left"><TrendingUp size={18} color="var(--primary)" /> Order Book</div>
-            <button onClick={() => { setBids(genBids()); setAsks(genAsks()); }}
+            <button onClick={() => loadSession().catch(console.error)}
               style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.8rem' }}>
               <RefreshCw size={13} /> Refresh
             </button>
@@ -274,7 +300,7 @@ export default function EnergyMarket() {
               </div>
               <div className="form-group">
                 <label className="form-label">Số lượng (kWh)</label>
-                <input className="form-input" type="number" min="1"
+                <input className="form-input" type="number" min="0.001" step="0.001"
                   value={amount} onChange={e => setAmount(e.target.value)}
                   placeholder="Nhập số kWh muốn giao dịch" />
               </div>
@@ -284,6 +310,11 @@ export default function EnergyMarket() {
                   {amount && price ? `${(+price * +amount).toFixed(6)} ETH` : '--'}
                 </span>
               </div>
+              {orderType === 'buy' && (
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', padding: '0 0.25rem' }}>
+                  Nếu ETH ký quỹ trên sàn chưa đủ, MetaMask sẽ hỏi nạp phần còn thiếu vào smart contract.
+                </div>
+              )}
               <button className={`submit-btn ${orderType}`} onClick={handleOrder}>
                 {isConnected
                   ? (orderType === 'buy' ? '✅ Gửi lệnh MUA lên Smart Contract' : '✅ Gửi lệnh BÁN lên Smart Contract')
@@ -320,13 +351,21 @@ export default function EnergyMarket() {
             <div className="chart-title-left"><CheckCircle size={18} color="var(--primary)" /> Khớp Lệnh Gần Nhất</div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {recentTrades.map((t, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0.75rem', borderRadius: 8, background: 'rgba(255,255,255,0.03)' }}>
-                <span style={{ color: t.side === 'buy' ? 'var(--primary)' : 'var(--danger)', fontWeight: 600 }}>{t.price}</span>
-                <span style={{ color: 'var(--text-sub)', fontSize: '0.85rem' }}>{t.amount} kWh</span>
-                <span className={`badge ${t.side}`}>{t.side.toUpperCase()}</span>
-                <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>{t.time}</span>
+            {trades.length === 0 && (
+              <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', padding: '0.5rem 0.75rem' }}>
+                Chưa có lệnh nào được khớp trên smart contract.
               </div>
+            )}
+            {trades.map((t, i) => (
+              <a key={`${t.hash}-${i}`} href={`${ETHERSCAN_URL}/tx/${t.hash}`} target="_blank" rel="noreferrer"
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0.75rem', borderRadius: 8, background: 'rgba(255,255,255,0.03)' }}>
+                <span style={{ color: 'var(--primary)', fontWeight: 600 }}>{t.price_ETH}</span>
+                <span style={{ color: 'var(--text-sub)', fontSize: '0.85rem' }}>{t.amount_kWh} kWh</span>
+                <span className="badge success">Phiên #{t.session}</span>
+                <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                  {new Date(t.timestamp * 1000).toLocaleTimeString('vi-VN')}
+                </span>
+              </a>
             ))}
           </div>
         </div>

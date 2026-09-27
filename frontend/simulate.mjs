@@ -155,12 +155,15 @@ console.log('🌞 SolarP2P IoT Simulator Starting...');
 console.log('📡 Firebase: https://p2p-solar-energy-default-rtdb.firebaseio.com/');
 console.log('⏱  Interval: 5 seconds\n');
 
-// Push đầu tiên ngay lập tức + seed data
-await seedMarketOrders();
-await seedTransactions();
-await pushData();
+// Dữ liệu market/transactions giả chỉ tạo khi chạy `node simulate.mjs --seed`.
+// Mặc định KHÔNG ghi đè: market/bids|asks là lệnh thật người dùng đặt trên web,
+// transactions là giao dịch thật backend ghi sau khi smart contract khớp lệnh.
+if (process.argv.includes('--seed')) {
+  await seedMarketOrders();
+  await seedTransactions();
+  setInterval(seedMarketOrders, 20000);
+}
 
-// Sau đó push mỗi 5 giây
+// Push đầu tiên ngay lập tức, sau đó push mỗi 5 giây
+await pushData();
 setInterval(pushData, 5000);
-// Refresh market orders mỗi 20 giây
-setInterval(seedMarketOrders, 20000);

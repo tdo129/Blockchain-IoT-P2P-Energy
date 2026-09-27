@@ -36,11 +36,13 @@ export default function Transactions() {
     const unsub = onValue(ref(db, 'transactions'), snap => {
       if (!snap.exists()) return;
       const raw = snap.val();
-      const arr = Array.isArray(raw) ? raw : Object.values(raw);
-      const mapped = arr.map((tx, i) => ({
+      // Giữ khóa Firebase làm id: một lần khớp lệnh có 2 bản ghi (người mua, người bán) cùng hash
+      const entries = Object.entries(raw).filter(([, tx]) => tx);
+      const mapped = entries.map(([key, tx], i) => ({
+        id:     key,
         hash:   tx.hash || `0x${Math.random().toString(16).slice(2, 18)}`,
         type:   tx.type || 'buy',
-        label:  tx.type === 'sell' ? 'Bán điện P2P' : tx.type === 'transfer' ? 'Chuyển ETH' : 'Mua điện P2P',
+        label:  tx.note || (tx.type === 'sell' ? 'Bán điện P2P' : tx.type === 'transfer' ? 'Chuyển ETH' : 'Mua điện P2P'),
         amount: tx.amount_kWh ? `${tx.amount_kWh} kWh` : '--',
         value:  tx.value_ETH  ? `${tx.value_ETH > 0 ? '+' : ''}${tx.value_ETH} ETH` : '--',
         fee:    '0.0003 ETH',
@@ -150,7 +152,7 @@ export default function Transactions() {
               ) : filtered.map(tx => {
                 const shortHash = tx.hash.length > 25 ? `${tx.hash.slice(0, 8)}...${tx.hash.slice(-6)}` : tx.hash;
                 return (
-                <tr key={tx.hash}>
+                <tr key={tx.id ?? tx.hash}>
                   <td>
                     <a
                       className="tx-hash-link"
