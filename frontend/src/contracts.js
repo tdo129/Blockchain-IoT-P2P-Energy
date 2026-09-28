@@ -1,7 +1,7 @@
 // Kết nối frontend với smart contract trên Sepolia.
 // Địa chỉ + ABI đọc thẳng từ file do `npm run deploy:sepolia` (folder contracts) sinh ra, deploy lại thì tự cập nhật.
 import { ethers } from 'ethers';
-import deployment from '../../contracts/deployments/sepolia.json';
+import deployment from './deployments/sepolia.json';
 import { db, ref, push } from './firebase';
 
 export const SEPOLIA_CHAIN_ID = 11155111n;
