@@ -35,6 +35,10 @@ module.exports = {
   nodeAskPriceEth: env.NODE_ASK_PRICE_ETH || "0.05",
   nodeBidPriceEth: env.NODE_BID_PRICE_ETH || "0.07",
 
+  // Broker và topic ESP32 (blockchainV2.ino) subscribe để nhận TRADE_SUCCESS. Đặt MQTT_URL= (rỗng) để tắt.
+  mqttUrl: env.MQTT_URL ?? "mqtt://broker.hivemq.com:1883",
+  mqttTopic: env.MQTT_TOPIC || "p2p/smart_contract",
+
   pollSeconds: Number(env.POLL_SECONDS || 5),
   // Hai bản ghi cách nhau quá khoảng này thì coi là mất dữ liệu, không tích phân qua khoảng trống.
   // ESP32 gửi mỗi 15 giây: 45 giây cho phép lỡ một mẫu.

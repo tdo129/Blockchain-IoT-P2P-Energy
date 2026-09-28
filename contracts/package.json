@@ -21,6 +21,7 @@
     "hardhat": "^2.29.1"
   },
   "dependencies": {
-    "ethers": "^6.17.0"
+    "ethers": "^6.17.0",
+    "mqtt": "^5.16.0"
   }
 }

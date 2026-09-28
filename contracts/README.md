@@ -15,6 +15,8 @@ ESP32 / simulate.mjs ──► Firebase ◄────────────�
                            │  matchOrders                      (hết phiên)
                            ▼
           P2PEnergyMarket (Sepolia) ── mintReward ──► SolarToken (SLR)
+
+backend/oracle.js ── MQTT p2p/smart_contract: TRADE_SUCCESS ──► ESP32 (relay lưới P2P đóng 2 giây)
 ```
 
 ## Cấu trúc
@@ -27,6 +29,7 @@ ESP32 / simulate.mjs ──► Firebase ◄────────────�
 | `backend/oracle.js` | Vòng lặp oracle (`npm run oracle`) |
 | `backend/firebase.js` | Đọc/ghi Firebase qua REST API |
 | `backend/sensor.js` | Đọc bản ghi ESP32 (`blockchainV2.ino`): thời điểm đo từ `metadata.timestamp` hoặc push key |
+| `backend/mqtt.js` | Gửi `TRADE_SUCCESS` cho ESP32 qua MQTT khi node có giao dịch khớp |
 | `backend/energy.js` | Tích phân công suất ra Wh, hash dữ liệu cảm biến |
 | `backend/orders.js` | Đọc lệnh `market/bids`, `market/asks` |
 | `backend/sync.js` | Tạo bản ghi `transactions` theo schema `Transactions.jsx` |
@@ -50,6 +53,7 @@ ESP32 / simulate.mjs ──► Firebase ◄────────────�
 | Nút "Nạp ETH", "Rút ETH" (My Wallet) | Gọi `deposit()`, `withdraw()`; My Wallet đọc `balances()` |
 | Đặt lệnh mua (Energy Market) | Thiếu ký quỹ thì frontend gọi `deposit()` phần còn thiếu trước khi ghi lệnh |
 | Phiên đấu giá (Energy Market) | Frontend đọc `currentSession()`, `sessionDeadline()` để đếm ngược |
+| ESP32 subscribe MQTT `p2p/smart_contract` (`blockchainV2.ino`) | Hết phiên, nếu ví node (`NODE_WALLET`) là người bán hoặc người mua trong một cặp khớp, backend gửi `TRADE_SUCCESS` (một lần mỗi phiên, không retain). `MQTT_URL=` rỗng để tắt |
 | Sổ lệnh | Backend ghi lệnh tự động của node vào `market/asks/iot_node_01` (`source: "iot"`), gỡ khi hết phiên |
 | `sensor_data_history` (ESP32 POST mỗi 15 giây) | Lệnh tự động của node: bản ghi mới nhất quá `NODE_STALE_SECONDS` thì coi là offline; tích phân `electrical.p_solar` / `p_load` × `POWER_SCALE` ra Wh |
 

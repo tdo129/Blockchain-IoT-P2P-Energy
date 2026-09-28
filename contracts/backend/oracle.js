@@ -1,7 +1,8 @@
 // Backend oracle: Firebase <-> P2PEnergyMarket
 //  - Đầu phiên: dữ liệu đo của ESP32 (sensor_data_history) -> điện năng -> dự báo -> submitOffer/submitBid
 //  - Trong phiên: lệnh người dùng đặt trên frontend (market/asks, market/bids) -> submitManualOffer/submitManualBid
-//  - Hết phiên: matchOrders -> ghi kết quả vào `transactions`, đổi status lệnh đã khớp hết thành "filled"
+//  - Hết phiên: matchOrders -> ghi kết quả vào `transactions`, đổi status lệnh đã khớp hết thành "filled",
+//    node có giao dịch khớp thì gửi TRADE_SUCCESS qua MQTT để ESP32 đóng relay lưới P2P
 // Chạy: npm run oracle   (cần deploy trước, xem README)
 const fs = require("fs");
 const path = require("path");
@@ -13,6 +14,7 @@ const { integrateEnergy, hashRecords } = require("./energy");
 const { ethToWei, parseMarketOrders } = require("./orders");
 const { MODEL_ID, forecastNextSession } = require("./forecast");
 const { buildTradeRecords } = require("./sync");
+const { TRADE_SUCCESS, nodeTraded, createEsp32Notifier } = require("./mqtt");
 
 /** RPC URL của Alchemy/Infura chứa API key ở path (…/v2/<key>): chỉ in host, che phần còn lại */
 function maskRpcUrl(url) {
@@ -103,11 +105,13 @@ async function main() {
   log(`Oracle          : ${oracleAddress}`);
   log(`Node ${cfg.nodeId} thuộc ví: ${nodeWallet}`);
   log(`Dữ liệu IoT     : sensor_data_history (ESP32), công suất x${cfg.powerScale}`);
+  log(`Lệnh ESP32      : ${cfg.mqttUrl ? `MQTT ${cfg.mqttUrl} topic ${cfg.mqttTopic}` : "tắt (MQTT_URL rỗng)"}`);
   log(`Mô hình dự báo  : ${MODEL_ID} (${modelHash})`);
   log(`Độ dài phiên    : ${sessionDuration} giây`);
 
   const state = loadState(deployment.P2PEnergyMarket.address);
-  const ctx = { firebase, market, modelHash, nodeWallet, sessionDuration, historyLimit, state, notes: {} };
+  const esp32 = createEsp32Notifier({ url: cfg.mqttUrl, topic: cfg.mqttTopic }, log);
+  const ctx = { firebase, market, modelHash, nodeWallet, sessionDuration, historyLimit, state, esp32, notes: {} };
   let waitingLogged = 0;
 
   for (;;) {
@@ -325,6 +329,9 @@ async function settleSession(ctx, session) {
   const filled = Object.values(state.openOrders).filter((o) => o.remainingWh <= 0);
   for (const o of filled) delete state.openOrders[o.key];
   saveState(state);
+
+  // Một tin cho cả phiên dù node khớp nhiều cặp: ESP32 chỉ cần một lần đóng relay
+  if (nodeTraded(matched, ctx.nodeWallet)) await ctx.esp32.send(TRADE_SUCCESS);
 
   if (!cfg.firebaseWrite) return;
   try {

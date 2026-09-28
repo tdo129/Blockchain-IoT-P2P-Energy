@@ -4,6 +4,7 @@ const { integrateEnergy, canonicalJson, hashRecords } = require("../backend/ener
 const { ethToWei, kwhToWh, parseMarketOrders } = require("../backend/orders");
 const { buildTradeRecords } = require("../backend/sync");
 const { pushKeyTime, parseDeviceTime, normalizeReading } = require("../backend/sensor");
+const { nodeTraded } = require("../backend/mqtt");
 
 // Bản ghi cùng cấu trúc ESP32 (blockchainV2.ino) ghi vào sensor_data_history, sau normalizeReading
 const reading = (timestamp, genW, loadW) => ({
@@ -153,6 +154,23 @@ describe("Backend - đọc lệnh từ market trên Firebase", function () {
     expect(valid).to.have.length(0);
     expect(invalid.map((o) => o.where)).to.deep.equal(["market/asks/0", "market/bids/-pushKey"]);
     expect(invalid[0].reason).to.contain("địa chỉ ví không hợp lệ");
+  });
+});
+
+describe("Backend - gửi TRADE_SUCCESS cho ESP32 qua MQTT", function () {
+  const node = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
+  const user = "0x90F79bf6EB2c4f870365E785982E1f101E93b906";
+  const other = "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65";
+  const match = (seller, buyer) => ({ args: { seller, buyer } });
+
+  it("gửi khi node là người bán hoặc người mua, không phân biệt chữ hoa/thường của NODE_WALLET", function () {
+    expect(nodeTraded([match(node, user)], node.toLowerCase())).to.equal(true);
+    expect(nodeTraded([match(user, node)], node)).to.equal(true);
+  });
+
+  it("không gửi khi phiên không có cặp khớp hoặc chỉ người dùng khác khớp với nhau", function () {
+    expect(nodeTraded([], node)).to.equal(false);
+    expect(nodeTraded([match(user, other)], node)).to.equal(false);
   });
 });
 
