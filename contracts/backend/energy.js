@@ -45,9 +45,13 @@ function canonicalJson(value) {
   return JSON.stringify(value);
 }
 
-/** dataHash đưa lên chain: keccak256 của đúng các bản ghi Firebase đã dùng để tính điện năng */
-function hashRecords(nodeId, records) {
-  return ethers.keccak256(ethers.toUtf8Bytes(canonicalJson({ nodeId, records })));
+/**
+ * dataHash đưa lên chain: keccak256 của đúng các bản ghi Firebase đã dùng để tính điện năng,
+ * kèm bản ghi ai_analytics/latest nếu chốt chặn AI đã dùng nó để quyết định.
+ */
+function hashRecords(nodeId, records, ai) {
+  const payload = ai ? { nodeId, records, ai } : { nodeId, records };
+  return ethers.keccak256(ethers.toUtf8Bytes(canonicalJson(payload)));
 }
 
 module.exports = { integrateEnergy, canonicalJson, hashRecords };

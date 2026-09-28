@@ -35,6 +35,11 @@ module.exports = {
   nodeAskPriceEth: env.NODE_ASK_PRICE_ETH || "0.05",
   nodeBidPriceEth: env.NODE_BID_PRICE_ETH || "0.07",
 
+  // Chốt chặn AI (ai_analytics/latest): AI báo bất thường thì node không tự bán điện. AI_GATE=false để tắt.
+  aiGate: env.AI_GATE !== "false",
+  // Mẫu AI xét cũ hơn dữ liệu ESP32 mới nhất quá khoảng này thì bỏ qua AI (coi như không có)
+  aiMaxLagSeconds: Number(env.AI_MAX_LAG_SECONDS || 120),
+
   // Broker và topic ESP32 (blockchainV2.ino) subscribe để nhận TRADE_SUCCESS. Đặt MQTT_URL= (rỗng) để tắt.
   mqttUrl: env.MQTT_URL ?? "mqtt://broker.hivemq.com:1883",
   mqttTopic: env.MQTT_TOPIC || "p2p/smart_contract",

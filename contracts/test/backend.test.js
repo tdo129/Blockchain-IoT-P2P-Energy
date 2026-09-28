@@ -5,6 +5,7 @@ const { ethToWei, kwhToWh, parseMarketOrders } = require("../backend/orders");
 const { buildTradeRecords } = require("../backend/sync");
 const { pushKeyTime, parseDeviceTime, normalizeReading } = require("../backend/sensor");
 const { nodeTraded } = require("../backend/mqtt");
+const { evaluateAiGate } = require("../backend/aiGate");
 
 // Bản ghi cùng cấu trúc ESP32 (blockchainV2.ino) ghi vào sensor_data_history, sau normalizeReading
 const reading = (timestamp, genW, loadW) => ({
@@ -154,6 +155,54 @@ describe("Backend - đọc lệnh từ market trên Firebase", function () {
     expect(valid).to.have.length(0);
     expect(invalid.map((o) => o.where)).to.deep.equal(["market/asks/0", "market/bids/-pushKey"]);
     expect(invalid[0].reason).to.contain("địa chỉ ví không hợp lệ");
+  });
+});
+
+describe("Backend - chốt chặn AI (ai_analytics/latest)", function () {
+  // Cùng cấu trúc bản ghi mô hình AI ghi trên Firebase
+  const ai = (overrides = {}) => ({
+    actual_power_w: 0.84,
+    anomaly_detected: false,
+    inferred_at: "2026-09-28 15:08:46",
+    power_difference_w: 0,
+    predicted_power_w: 0.84,
+    sample_id: 40,
+    status: "OPTIMAL",
+    timestamp: "2026-09-28 15:08:30",
+    tracking_accuracy_pct: 100.55,
+    ...overrides,
+  });
+  const esp32Ts = parseDeviceTime("2026-09-28 15:08:45"); // mẫu ESP32 mới nhất
+
+  it("AI xét mẫu gần dữ liệu ESP32 và báo OPTIMAL thì cho qua", function () {
+    const gate = evaluateAiGate(ai(), esp32Ts, 120);
+    expect(gate.status).to.equal("ok");
+    expect(gate.lagSeconds).to.equal(15);
+  });
+
+  it("AI báo bất thường (anomaly_detected hoặc FAULT_DETECTED) thì chặn", function () {
+    expect(evaluateAiGate(ai({ anomaly_detected: true }), esp32Ts, 120).status).to.equal("anomaly");
+    expect(evaluateAiGate(ai({ status: "FAULT_DETECTED" }), esp32Ts, 120).status).to.equal("anomaly");
+  });
+
+  it("mẫu AI cũ hơn ESP32 quá ngưỡng thì bỏ qua AI, kể cả khi AI báo bất thường", function () {
+    // Như dữ liệu thật: AI dừng ở mẫu 19:47:44 trong khi ESP32 còn gửi tới 20:00:30
+    const gate = evaluateAiGate(ai({ timestamp: "2026-09-28 19:47:44", anomaly_detected: true }), parseDeviceTime("2026-09-28 20:00:30"), 120);
+    expect(gate.status).to.equal("stale");
+    expect(gate.lagSeconds).to.equal(766);
+  });
+
+  it("không có bản ghi AI hoặc thời điểm không đọc được thì bỏ qua AI", function () {
+    expect(evaluateAiGate(null, esp32Ts, 120).status).to.equal("missing");
+    expect(evaluateAiGate(ai({ timestamp: "N/A" }), esp32Ts, 120).status).to.equal("stale");
+  });
+
+  it("dataHash đổi khi gồm bản ghi AI, không gồm AI thì giữ nguyên như trước", function () {
+    const records = [reading(1000, 100, 50)];
+    const withoutAi = hashRecords("node_01", records);
+    expect(hashRecords("node_01", records, undefined)).to.equal(withoutAi);
+    expect(hashRecords("node_01", records, ai())).to.not.equal(withoutAi);
+    expect(hashRecords("node_01", records, ai({ status: "FAULT_DETECTED" }))).to.not.equal(hashRecords("node_01", records, ai()));
   });
 });
 

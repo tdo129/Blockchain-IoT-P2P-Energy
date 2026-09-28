@@ -34,6 +34,9 @@ function createFirebaseClient(baseUrl) {
         .sort((a, b) => a.timestamp - b.timestamp);
     },
 
+    /** Kết quả mới nhất của mô hình AI (đọc sensor_data_recent): status, anomaly_detected, predicted_power_w, ... */
+    getAiLatest: () => get("ai_analytics/latest"),
+
     /** Sổ lệnh người dùng đặt trên web: { asks, bids } (mảng do simulate.mjs ghi, hoặc object push key do frontend ghi) */
     getMarket: async () => (await get("market")) || {},
 

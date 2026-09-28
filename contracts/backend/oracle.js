@@ -1,5 +1,6 @@
 // Backend oracle: Firebase <-> P2PEnergyMarket
 //  - Đầu phiên: dữ liệu đo của ESP32 (sensor_data_history) -> điện năng -> dự báo -> submitOffer/submitBid
+//    (AI báo bất thường trong ai_analytics/latest thì không tự bán)
 //  - Trong phiên: lệnh người dùng đặt trên frontend (market/asks, market/bids) -> submitManualOffer/submitManualBid
 //  - Hết phiên: matchOrders -> ghi kết quả vào `transactions`, đổi status lệnh đã khớp hết thành "filled",
 //    node có giao dịch khớp thì gửi TRADE_SUCCESS qua MQTT để ESP32 đóng relay lưới P2P
@@ -15,6 +16,7 @@ const { ethToWei, parseMarketOrders } = require("./orders");
 const { MODEL_ID, forecastNextSession } = require("./forecast");
 const { buildTradeRecords } = require("./sync");
 const { TRADE_SUCCESS, nodeTraded, createEsp32Notifier } = require("./mqtt");
+const { evaluateAiGate } = require("./aiGate");
 
 /** RPC URL của Alchemy/Infura chứa API key ở path (…/v2/<key>): chỉ in host, che phần còn lại */
 function maskRpcUrl(url) {
@@ -105,7 +107,8 @@ async function main() {
   log(`Oracle          : ${oracleAddress}`);
   log(`Node ${cfg.nodeId} thuộc ví: ${nodeWallet}`);
   log(`Dữ liệu IoT     : sensor_data_history (ESP32), công suất x${cfg.powerScale}`);
-  log(`Lệnh ESP32      : ${cfg.mqttUrl ? `MQTT ${cfg.mqttUrl} topic ${cfg.mqttTopic}` : "tắt (MQTT_URL rỗng)"}`);
+  log(`Chốt chặn AI    : ${cfg.aiGate ? `ai_analytics/latest, mẫu AI lệch tối đa ${cfg.aiMaxLagSeconds} giây` : "tắt (AI_GATE=false)"}`);
+  log(`Lệnh ESP32      :${cfg.mqttUrl ? `MQTT ${cfg.mqttUrl} topic ${cfg.mqttTopic}` : "tắt (MQTT_URL rỗng)"}`);
   log(`Mô hình dự báo  : ${MODEL_ID} (${modelHash})`);
   log(`Độ dài phiên    : ${sessionDuration} giây`);
 
@@ -178,13 +181,23 @@ async function submitNodeOrder({ firebase, market, modelHash, nodeWallet, sessio
   );
 
   const forecast = await forecastNextSession({ measured });
-  const dataHash = hashRecords(cfg.nodeId, measured.records);
-  log(`[AI]  Dự báo phiên tới: phát ${forecast.generationWh} Wh, tiêu thụ ${forecast.consumptionWh} Wh`);
-  log(`[AI]  dataHash = ${dataHash}`);
+  log(`[DỰ BÁO] Phiên tới: phát ${forecast.generationWh} Wh, tiêu thụ ${forecast.consumptionWh} Wh`);
+
+  const gate = await checkAiGate(firebase, latest.timestamp);
+  // Bản ghi AI chỉ vào dataHash khi chốt chặn thực sự dựa vào nó (ok/anomaly), để on-chain chứng minh được AI đã báo gì
+  const aiUsed = gate.status === "ok" || gate.status === "anomaly" ? gate.record : undefined;
+  const dataHash = hashRecords(cfg.nodeId, measured.records, aiUsed);
+  log(`[DỰ BÁO] dataHash = ${dataHash}${aiUsed ? " (gồm bản ghi AI)" : ""}`);
+
+  const wantsToSell = forecast.generationWh > forecast.consumptionWh;
+  if (wantsToSell && gate.status === "anomaly") {
+    log(`[AI]  Không tự bán ${forecast.generationWh - forecast.consumptionWh} Wh phiên này: ${gate.reason}`);
+    return;
+  }
 
   let tx;
   let order;
-  if (forecast.generationWh > forecast.consumptionWh) {
+  if (wantsToSell) {
     const price = ethToWei(cfg.nodeAskPriceEth);
     tx = await market.submitOffer(nodeWallet, forecast.generationWh, forecast.consumptionWh, price, dataHash, modelHash);
     order = { side: "asks", type: "ask", energyWh: forecast.generationWh - forecast.consumptionWh, priceEth: cfg.nodeAskPriceEth };
@@ -208,6 +221,23 @@ async function submitNodeOrder({ firebase, market, modelHash, nodeWallet, sessio
       log("[FIREBASE] Không ghi được lệnh node vào market:", err.message);
     }
   }
+}
+
+/** Đọc ai_analytics/latest và đánh giá; lỗi đọc Firebase coi như không có AI, không làm hỏng lệnh tự động */
+async function checkAiGate(firebase, latestReadingTs) {
+  if (!cfg.aiGate) return { status: "off" };
+  let ai;
+  try {
+    ai = await firebase.getAiLatest();
+  } catch (err) {
+    log(`[AI]  Không đọc được ai_analytics/latest (${err.message}), bỏ qua chốt chặn AI`);
+    return { status: "missing" };
+  }
+  const gate = evaluateAiGate(ai, latestReadingTs, cfg.aiMaxLagSeconds);
+  if (gate.status === "ok") log(`[AI]  ${gate.reason} (mẫu #${ai.sample_id}, lệch ${gate.lagSeconds} giây so với ESP32)`);
+  else if (gate.status === "anomaly") log(`[AI]  CẢNH BÁO ${gate.reason} (mẫu #${ai.sample_id})`);
+  else log(`[AI]  Bỏ qua chốt chặn AI: ${gate.reason}. Lệnh tự động dựa trên số đo như khi chưa có AI`);
+  return gate;
 }
 
 const nodeOrderKey = () => `iot_${cfg.nodeId}`;
