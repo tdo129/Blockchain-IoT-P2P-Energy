@@ -1,20 +1,22 @@
 // Firebase configuration cho dự án P2P Solar Energy Trading
-// Database URL: https://blockchain-6d10b-default-rtdb.asia-southeast1.firebasedatabase.app/
-// Cùng database mà ESP32 (blockchainV2.ino) ghi dữ liệu cảm biến và backend oracle ghi kết quả khớp lệnh.
+// Database URL: https://p2p-solar-energy-default-rtdb.firebaseio.com/
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
-  getDatabase, ref, set, onValue, push, get, serverTimestamp,
-  query, orderByKey, limitToLast,
+  getDatabase, ref, set, onValue, push, get, serverTimestamp
 } from 'firebase/database';
 
 // Minimal config cho Realtime Database (public rules, không cần Auth)
-// Database ở region asia-southeast1 nên bắt buộc có databaseURL đầy đủ, không suy ra từ projectId được.
+// Firebase Console → Realtime Database → Rules:
+//   { "rules": { ".read": true, ".write": true } }
 const firebaseConfig = {
-  apiKey:        'AIzaSyD-placeholder-not-needed-for-public-rtdb',
-  authDomain:    'blockchain-6d10b.firebaseapp.com',
-  databaseURL:   'https://blockchain-6d10b-default-rtdb.asia-southeast1.firebasedatabase.app/',
-  projectId:     'blockchain-6d10b',
-  appId:         '1:000000000000:web:placeholder000000',
+  apiKey: "AIzaSyBH3TWMk6E-QVuJ1BCOOURBGH9NoseEdC0",
+  authDomain: "p2p-solar-energy.firebaseapp.com",
+  databaseURL: "https://p2p-solar-energy-default-rtdb.firebaseio.com",
+  projectId: "p2p-solar-energy",
+  storageBucket: "p2p-solar-energy.firebasestorage.app",
+  messagingSenderId: "106417640853",
+  appId: "1:106417640853:web:47dec07f895cd55a20929c",
+  measurementId: "G-CE246NJ8EY"
 };
 
 // Guard: tránh duplicate-app lỗi khi Vite HMR reload
@@ -23,15 +25,14 @@ export const db = getDatabase(app);
 
 // ── Path refs ────────────────────────────────────────────────────────────────
 export const refs = {
-  // ESP32 POST mỗi 15 giây (push key tăng theo thời gian): lấy N bản ghi mới nhất
-  sensorHistory: (limit) => query(ref(db, 'sensor_data_history'), orderByKey(), limitToLast(limit)),
-  // ESP32 PUT xoay vòng record_0..record_9 cho mô hình AI
-  sensorRecent:  () => ref(db, 'sensor_data_recent'),
-  // Kết quả mô hình AI (đọc sensor_data_recent) ghi vào
-  aiLatest:      () => ref(db, 'ai_analytics/latest'),
-  marketBids:    () => ref(db, 'market/bids'),
-  marketAsks:    () => ref(db, 'market/asks'),
-  transactions:  () => ref(db, 'transactions'),
+  sensorLatest: () => ref(db, 'tram_hien_tai'),
+  sensorHistory: () => ref(db, 'lich_su_do'),
+  marketBids: () => ref(db, 'market/bids'),
+  marketAsks: () => ref(db, 'market/asks'),
+  orders: () => ref(db, 'orders'),
+  trades: () => ref(db, 'trades'),
+  nodes: () => ref(db, 'iot_nodes'),
+  transactions: () => ref(db, 'transactions'),
 };
 
 // ── Re-export helpers ────────────────────────────────────────────────────────
