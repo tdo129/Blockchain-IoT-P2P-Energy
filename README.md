@@ -86,9 +86,9 @@ Cần file `contracts/.env` (tạo từ `.env.example`, không commit). Hướng
 ## 🔗 Liên kết quan trọng
 - **Mạng thử nghiệm (Testnet)**: Sepolia
 - **Trình khám phá chuỗi (Explorer)**: [Sepolia Etherscan](https://sepolia.etherscan.io/)
-- **P2PEnergyMarket**: [0x5E80aE85c9047EC0bC7a986d7E756A758981E308](https://sepolia.etherscan.io/address/0x5E80aE85c9047EC0bC7a986d7E756A758981E308)
-- **SolarToken (SLR)**: [0xDb40539F50B3468CBa609Be9352b5F595E77445B](https://sepolia.etherscan.io/address/0xDb40539F50B3468CBa609Be9352b5F595E77445B)
-- **DeviceRegistry**: [0x424ece2b487a41c7DB91AbFF3e4c95DD2D493dD9](https://sepolia.etherscan.io/address/0x424ece2b487a41c7DB91AbFF3e4c95DD2D493dD9)
+- **P2PEnergyMarket**: [0x23194c35B6de99b3b50A2ee07B817E3bE89cA612](https://sepolia.etherscan.io/address/0x23194c35B6de99b3b50A2ee07B817E3bE89cA612)
+- **SolarToken (SLR)**: [0x3bd3A251021d781Fa6B37d5B97B6A91fd779FDa6](https://sepolia.etherscan.io/address/0x3bd3A251021d781Fa6B37d5B97B6A91fd779FDa6)
+- **DeviceRegistry**: [0xd91b0144388FAd8f341C4F1376Ad6ad15741b1DE](https://sepolia.etherscan.io/address/0xd91b0144388FAd8f341C4F1376Ad6ad15741b1DE)
 
 ---
 *Dự án Đồ án môn học - Quản lý và giao dịch năng lượng P2P*

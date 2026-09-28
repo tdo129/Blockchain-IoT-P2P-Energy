@@ -1,14 +1,14 @@
 {
   "network": "sepolia",
   "chainId": 11155111,
-  "deployedAt": "2026-09-27T07:14:48.968Z",
+  "deployedAt": "2026-09-28T15:05:22.673Z",
   "deployer": "0x3E370cbfa0107d83763c44e6451E0CDb470Ff902",
   "oracle": "0x0492631C057A3c06C45fA80AA84cDCd02d3F0691",
   "modelId": "naive-persistence-v1",
   "modelHash": "0xe016a9d3f59c2f2d02937b3fbeb0c7ebebaed4caf064b280a315132cc4655e03",
   "sessionDuration": 300,
   "SolarToken": {
-    "address": "0xDb40539F50B3468CBa609Be9352b5F595E77445B",
+    "address": "0x3bd3A251021d781Fa6B37d5B97B6A91fd779FDa6",
     "args": [
       "0"
     ],
@@ -427,7 +427,7 @@
     ]
   },
   "DeviceRegistry": {
-    "address": "0x424ece2b487a41c7DB91AbFF3e4c95DD2D493dD9",
+    "address": "0xd91b0144388FAd8f341C4F1376Ad6ad15741b1DE",
     "args": [],
     "abi": [
       {
@@ -587,9 +587,9 @@
     ]
   },
   "P2PEnergyMarket": {
-    "address": "0x5E80aE85c9047EC0bC7a986d7E756A758981E308",
+    "address": "0x23194c35B6de99b3b50A2ee07B817E3bE89cA612",
     "args": [
-      "0xDb40539F50B3468CBa609Be9352b5F595E77445B",
+      "0x3bd3A251021d781Fa6B37d5B97B6A91fd779FDa6",
       "0x0492631C057A3c06C45fA80AA84cDCd02d3F0691",
       "300"
     ],
