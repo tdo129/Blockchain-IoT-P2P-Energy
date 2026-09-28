@@ -1,5 +1,6 @@
 // Kết nối frontend với smart contract trên Sepolia.
-// Địa chỉ + ABI đọc thẳng từ file do `npm run deploy:sepolia` (folder contracts) sinh ra, deploy lại thì tự cập nhật.
+// Địa chỉ + ABI đọc từ bản copy trong frontend (Vercel chỉ build folder frontend, không đọc được ../contracts).
+// `npm run deploy:sepolia` (folder contracts) ghi cả contracts/deployments/sepolia.json và bản copy này.
 import { ethers } from 'ethers';
 import deployment from './deployments/sepolia.json';
 import { db, ref, push } from './firebase';
