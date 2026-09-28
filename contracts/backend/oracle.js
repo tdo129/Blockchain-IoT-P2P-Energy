@@ -14,7 +14,20 @@ const { ethToWei, parseMarketOrders } = require("./orders");
 const { MODEL_ID, forecastNextSession } = require("./forecast");
 const { buildTradeRecords } = require("./sync");
 
-const log = (...args) => console.log(`[${new Date().toLocaleTimeString("vi-VN")}]`, ...args);
+/** RPC URL của Alchemy/Infura chứa API key ở path (…/v2/<key>): chỉ in host, che phần còn lại */
+function maskRpcUrl(url) {
+  try {
+    const u = new URL(url);
+    return u.pathname.length > 1 || u.search || u.username ? `${u.protocol}//${u.host}/***` : u.origin;
+  } catch {
+    return "***";
+  }
+}
+const rpcLabel = maskRpcUrl(cfg.rpcUrl);
+
+// Mọi dòng log đều thay RPC URL đầy đủ bằng bản đã che, kể cả khi URL nằm trong thông báo lỗi của ethers
+const redact = (arg) => (typeof arg === "string" ? arg.replaceAll(cfg.rpcUrl, rpcLabel) : arg);
+const log = (...args) => console.log(`[${new Date().toLocaleTimeString("vi-VN")}]`, ...args.map(redact));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 const fmtEth = (wei) => `${ethers.formatEther(wei)} ETH`;
@@ -85,7 +98,7 @@ async function main() {
 
   log("=== BACKEND ORACLE P2P ENERGY ===");
   log(`Firebase        : ${cfg.firebaseUrl} (${cfg.firebaseWrite ? "đọc + ghi kết quả" : "chỉ đọc"})`);
-  log(`Mạng            : ${cfg.network} (${cfg.rpcUrl})`);
+  log(`Mạng            : ${cfg.network} (${rpcLabel})`);
   log(`Market contract : ${deployment.P2PEnergyMarket.address}`);
   log(`Oracle          : ${oracleAddress}`);
   log(`Node ${cfg.nodeId} thuộc ví: ${nodeWallet}`);
@@ -354,6 +367,6 @@ async function writeResultsToFirebase({ firebase }, receipt, matched, filled) {
 main().catch((err) => {
   const message = err.shortMessage || err.message;
   log("Backend dừng:", message);
-  if (message.includes("ECONNREFUSED")) log(`Không kết nối được ${cfg.rpcUrl}. Đã chạy \`npx hardhat node\` chưa?`);
+  if (message.includes("ECONNREFUSED")) log(`Không kết nối được ${rpcLabel}. Đã chạy \`npx hardhat node\` chưa?`);
   process.exit(1); // provider của ethers tự thử kết nối lại mãi nếu không thoát hẳn
 });
