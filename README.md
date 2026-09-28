@@ -1,94 +1,169 @@
-# 🌞 P2P Solar Energy Trading Dashboard
+# 🌞 SolarP2P — Hệ thống quản lý và giao dịch năng lượng mặt trời P2P
 
-Dự án Hệ thống quản lý và giao dịch năng lượng mặt trời P2P (P2P Energy Trading) dựa trên công nghệ **Blockchain (Web3)**, **IoT**, và **AI**.
+Đồ án cuối kỳ học phần **Cơ sở Blockchain và Ứng dụng**, *Đề tài 1: P2P Energy Trading*. Hệ thống CPS tích hợp
+3 tầng: **IoT** (ESP32 đo điện năng thật của tấm pin và tải) → **AI** (LSTM INT8 dự báo công suất, phát hiện bất
+thường) → **Blockchain** (smart contract trên Sepolia mở phiên đấu giá, khớp lệnh, thanh toán ETH và thưởng token SLR).
 
-## 📌 Tính năng chính
+- **Web demo:** https://frontend-silk-two-98.vercel.app
+- **Smart contract (Sepolia):** [P2PEnergyMarket `0x2319…A612`](https://sepolia.etherscan.io/address/0x23194c35B6de99b3b50A2ee07B817E3bE89cA612#code)
 
-- 📊 **Dashboard Thời Gian Thực**: Lấy dữ liệu trực tiếp từ Firebase (công suất, điện áp, dòng điện).
-- 🔗 **Web3 & MetaMask**: Tích hợp ví MetaMask để thực hiện và xác nhận giao dịch P2P qua mạng Sepolia.
-- 🌍 **Truy vết On-chain (Etherscan)**: Lịch sử mọi giao dịch mua bán điện được băm (hash) và lưu lại vĩnh viễn trên chuỗi khối, có thể tra cứu qua Sepolia Etherscan.
-- 📱 **Responsive UI**: Giao diện thiết kế theo phong cách Glassmorphism hiện đại (Dark mode).
+## 1. Cấu trúc repository
 
-## 🚀 Công nghệ sử dụng
-
-- **Frontend**: React.js (Vite), Tailwind CSS (hoặc custom CSS hiện đại), Recharts, Lucide-react.
-- **Blockchain**: ethers.js v6, Mạng thử nghiệm Sepolia, Ví MetaMask.
-- **Backend / Database**: Firebase Realtime Database (Lưu trữ trạng thái các thiết bị IoT và lịch sử giao dịch).
-- **Phần cứng (IoT)**: ESP32 (`blockchainV2.ino`) đo INA219 nguồn phát/tải, DHT11, DS18B20, ghi Firebase mỗi 15 giây; `simulate.mjs` mô phỏng cùng định dạng khi không có phần cứng.
-
-## 📂 Cấu trúc dự án
+Theo mục 5.2 của *Hướng dẫn đồ án cuối kỳ*:
 
 ```
 Blockchain-IoT-P2P-Energy/
-├── frontend/                   # Mã nguồn ứng dụng Web React
-│   ├── src/                    
-│   │   ├── components/         # Các UI component tái sử dụng (TopBar, Sidebar)
-│   │   ├── context/            # Web3Context quản lý kết nối MetaMask
-│   │   ├── pages/              # Các trang chính (Overview, EnergyMarket, Transactions, MyWallet)
-│   │   ├── contracts.js        # Kết nối smart contract (địa chỉ + ABI từ contracts/deployments)
-│   │   └── firebase.js         # Cấu hình Firebase
-│   ├── FIREBASE_SETUP.md       # Hướng dẫn setup Firebase
-│   ├── simulate.mjs            # Mô phỏng ESP32 gửi dữ liệu lên Firebase (cùng định dạng blockchainV2.ino)
-│   └── package.json            # Các thư viện phụ thuộc
-├── blockchainV2.ino            # Firmware ESP32: đo cảm biến, ghi Firebase, nhận lệnh MQTT
-├── contracts/                  # Tầng Blockchain (xem contracts/README.md)
-│   ├── contracts/              # Smart contract Solidity: P2PEnergyMarket, SolarToken (SLR), DeviceRegistry
-│   ├── backend/                # Backend oracle: Firebase <-> smart contract
-│   ├── scripts/                # Deploy, verify Etherscan, demo
-│   ├── test/                   # Test Hardhat
-│   └── deployments/sepolia.json# Địa chỉ + ABI contract đã deploy trên Sepolia
-└── README.md                   # Thông tin dự án
+├── README.md            # File này: tổng quan, cài đặt, cấu hình, các bước chạy demo
+├── contracts/           # Smart contract Solidity (Hardhat) + backend oracle ethers.js  → contracts/README.md
+├── ai_model/            # Notebook huấn luyện LSTM + trọng số Float32 / INT8            → ai_model/README.md
+├── iot_code/            # Tầng IoT và giao diện người dùng                               → iot_code/README.md
+│   ├── blockchainV2/    # Firmware ESP32 (Arduino)
+│   ├── simulator/       # Bộ giả lập ESP32 cùng định dạng dữ liệu
+│   └── frontend/        # Dashboard Web3 React (MetaMask, Etherscan), deploy Vercel    → iot_code/frontend/README.md
+└── Report_NhomXX.pdf    # Báo cáo kỹ thuật chính thức (nhóm bổ sung, đổi XX thành số nhóm)
 ```
 
-## ⛓️ Tầng Blockchain
+| Yêu cầu | Thư mục |
+|---|---|
+| `/contracts`: mã nguồn Smart Contracts | `contracts/contracts/*.sol`; kèm backend oracle ở `contracts/backend` vì dùng chung ABI, địa chỉ deploy và bộ test |
+| `/ai_model`: mã nguồn huấn luyện và file trọng số | `ai_model/blockchain.ipynb`, `solar_lstm.pth`, `solar_lstm_int8.pth` |
+| `/iot_code`: mã nguồn giả lập hoặc nạp phần cứng | `iot_code/blockchainV2/blockchainV2.ino` (nạp ESP32), `iot_code/simulator/simulate.mjs` (giả lập); kèm dashboard `iot_code/frontend` hiển thị dữ liệu IoT |
 
-- **P2PEnergyMarket**: sàn đấu giá theo phiên. Người mua nạp ETH ký quỹ, hết phiên contract khớp lệnh,
-  chuyển ETH cho người bán và thưởng token **SLR** (1 SLR / kWh bán được).
-- **Backend oracle** (`contracts/backend/oracle.js`): đọc dữ liệu cảm biến trên Firebase để tạo lệnh bán tự động
-  cho node IoT (kèm hash dữ liệu làm bằng chứng), chuyển lệnh người dùng đặt trên web lên contract,
-  gọi `matchOrders` khi hết phiên và ghi kết quả (hash giao dịch thật) vào Firebase `transactions`.
-- **Frontend**: nút Nạp/Rút ETH gọi `deposit()` / `withdraw()`, trang Energy Market đọc phiên đấu giá từ contract,
-  đặt lệnh mua tự nạp phần ký quỹ còn thiếu, trang Transactions truy vết trên Sepolia Etherscan.
+## 2. Kiến trúc CPS
 
-## 🛠️ Hướng dẫn cài đặt và chạy thử
+```
+┌──────────────── TẦNG IoT (iot_code) ────────────────┐
+│ ESP32: 2×INA219 (Ps, Pl), DHT11, DS18B20, LCD, 2 relay│
+└───────┬───────────────────────────────▲─────────────┘
+        │ HTTPS mỗi 15 s                 │ MQTT p2p/smart_contract: TRADE_SUCCESS
+        ▼                                │ (broker.hivemq.com)
+┌──────────────── Firebase Realtime Database (blockchain-6d10b) ────────────────┐
+│ sensor_data_history · sensor_data_recent · ai_analytics · market · transactions│
+└──┬──────────────────┬───────────────────────────┬───────────────────▲─────────┘
+   │ 10 mẫu gần nhất  │ dữ liệu đo + kết quả AI    │ lệnh web          │ kết quả khớp lệnh
+   ▼                  ▼                            │                   │
+┌─ TẦNG AI ──────┐  ┌─ Backend oracle (contracts/backend, ethers.js) ──┴───────────┐
+│ LSTM INT8      │  │ tích phân công suất → Wh → dự báo → chốt chặn AI → dataHash │
+│ (ai_model)     │─►│ đưa lệnh web lên chain · hết phiên gọi matchOrders          │
+│ ai_analytics   │  └────────────────────────────┬─────────────────────────────────┘
+└────────────────┘                               │ submitOffer/Bid, submitManual*, matchOrders
+                                                 ▼
+┌──────────────── TẦNG BLOCKCHAIN (contracts) — Sepolia ─────────────────┐
+│ P2PEnergyMarket: ký quỹ ETH, phiên đấu giá, khớp lệnh, thanh toán       │
+│ SolarToken (SLR): thưởng 1 SLR/kWh bán được · DeviceRegistry            │
+└───────────────────────────────▲────────────────────────────────────────┘
+                                │ deposit / withdraw, đọc phiên & số dư (MetaMask)
+┌──────────────── Dashboard Web3 (frontend) ─────────────────────────────┐
+│ Overview · Energy Market · My Wallet · Transactions (link Etherscan)    │
+└────────────────────────────────────────────────────────────────────────┘
+```
 
-### 1. Cài đặt thư viện
+| Tầng | Công nghệ | Vai trò |
+|---|---|---|
+| IoT | ESP32, INA219, DHT11, DS18B20, FreeRTOS, HTTPS, MQTT | Đo điện áp/dòng/công suất phát và tiêu thụ, nhiệt độ; thực thi lệnh relay |
+| AI | PyTorch LSTM, lượng tử hoá INT8 | Dự báo công suất từ thời tiết (R² 92,94%), phát hiện bất thường |
+| Blockchain | Solidity 0.8.24, OpenZeppelin, Hardhat, Sepolia | Minh bạch dữ liệu (dataHash), tự động đấu giá, thanh toán, thưởng token |
+| Kết nối | ethers.js v6, Firebase REST/SDK, MetaMask | Oracle backend và dashboard web |
+
+## 3. Luồng dữ liệu end-to-end của một phiên đấu giá (5 phút)
+
+1. **IoT:** ESP32 gửi một mẫu mỗi 15 giây vào `sensor_data_history` và `sensor_data_recent`.
+2. **AI:** mô hình đọc 10 mẫu gần nhất, ghi `ai_analytics/latest` (công suất dự đoán, `anomaly_detected`, `status`).
+3. **Mở phiên:** phiên mới tự mở ngay khi phiên trước được khớp (hoặc lúc deploy với phiên 1).
+4. **Lệnh tự động của node:** đầu phiên, oracle kiểm tra ESP32 online, tích phân công suất 5 phút vừa qua ra Wh,
+   dự báo phiên tới, qua chốt chặn AI, rồi gọi `submitOffer` (dư điện → bán) hoặc `submitBid` (thiếu → mua) kèm
+   `dataHash` của đúng dữ liệu đã dùng và `modelHash` của mô hình đã được duyệt.
+5. **Lệnh người dùng:** trên web, người mua nạp ETH ký quỹ bằng MetaMask và đặt lệnh (ghi vào `market`); oracle đưa
+   lên contract bằng `submitManualBid` / `submitManualOffer` trong vòng 5 giây.
+6. **Khớp lệnh:** hết giờ, oracle gọi `matchOrders`. Contract ghép lệnh bán với lệnh mua có giá trần ≥ giá sàn,
+   giá chốt = trung bình hai giá, chuyển ETH ký quỹ từ người mua sang người bán, mint SLR cho người bán, mở phiên mới.
+7. **Phản hồi:** oracle ghi kết quả vào `transactions` (hash giao dịch thật), đổi lệnh đã khớp sang `filled`, gửi
+   `TRADE_SUCCESS` qua MQTT → ESP32 đóng relay lưới P2P 2 giây, LCD hiện `P2P!`. Web tự cập nhật; người bán rút ETH ở My Wallet.
+
+## 4. Cơ sở dữ liệu Firebase
+
+URL: `https://blockchain-6d10b-default-rtdb.asia-southeast1.firebasedatabase.app` (dùng chung cho mọi tầng).
+
+```
+├── sensor_data_history/<push key>      ESP32 POST mỗi 15 s, lưu vĩnh viễn
+│     metadata {sample_id, timestamp "YYYY-MM-DD HH:MM:SS" giờ VN | "N/A"}
+│     electrical {v_solar V, i_solar mA, p_solar W, v_load V, i_load mA, p_load W}
+│     environment {irradiance W/m², temp_panel °C, temp_ambient °C}
+├── sensor_data_recent/record_0..9      ESP32 PUT xoay vòng 10 mẫu gần nhất (cùng JSON), đầu vào của AI
+├── ai_analytics/latest, history/...    AI ghi: predicted_power_w, actual_power_w, anomaly_detected, status, ...
+├── market/bids | asks/<push key>       Web ghi lệnh {type, price_ETH, amount_kWh, addr, status, timestamp};
+│                  iot_node_01          oracle ghi lệnh tự động của node (source: "iot")
+└── transactions/<push key>             Oracle ghi kết quả khớp {hash, type sell|buy, amount_kWh, value_ETH, block,
+                                        timestamp, status, addr}; web ghi nạp/rút ETH
+```
+
+Rules phải cho phép đọc/ghi (demo đang để công khai: `{"rules": {".read": true, ".write": true}}`). Khi dùng thật cần
+thêm Firebase Authentication.
+
+## 5. Cài đặt và cấu hình môi trường
+
+| Công cụ | Dùng cho |
+|---|---|
+| Node.js 20.19+ (khuyên dùng 22 hoặc 24) | `contracts` (Hardhat, oracle), `iot_code/frontend`, bộ giả lập IoT |
+| Tiện ích MetaMask, mạng Sepolia, ít Sepolia ETH (faucet) | Đặt lệnh, nạp/rút ký quỹ |
+| Arduino IDE 2.x + board ESP32 | Nạp firmware (chỉ khi dùng phần cứng thật) |
+| Python 3.10+ / Kaggle | Huấn luyện lại mô hình AI (không bắt buộc để chạy demo) |
+
 ```bash
-cd frontend
-npm install
+git clone https://github.com/tdo129/Blockchain-IoT-P2P-Energy
+cd Blockchain-IoT-P2P-Energy
+cd contracts; npm install; cd ..
+cd iot_code/frontend; npm install; cd ../..
 ```
 
-### 2. Khởi chạy Dashboard (Web App)
-```bash
-npm run dev
-```
-Trình duyệt sẽ mở tại `http://localhost:5174` (hoặc cổng tương tự).
+Tạo `contracts/.env` từ `contracts/.env.example`, điền `NETWORK=sepolia`, `RPC_URL` (Alchemy/Infura),
+`ORACLE_PRIVATE_KEY`, `NODE_WALLET` (chi tiết tất cả biến: [contracts/README.md](contracts/README.md#4-cấu-hình-env)).
+**Không commit file `.env`.** Frontend không cần cấu hình.
 
-### 3. Nguồn dữ liệu IoT
-ESP32 nạp `blockchainV2.ino` tự ghi dữ liệu lên Firebase
-`https://blockchain-6d10b-default-rtdb.asia-southeast1.firebasedatabase.app/` mỗi 15 giây.
-Khi không có phần cứng (và chỉ khi ESP32 đang tắt), mở một terminal khác và chạy script mô phỏng:
-```bash
-cd frontend
-npm run simulate
-```
-Dữ liệu được đẩy lên Firebase mỗi 15 giây (giống ESP32), giao diện Web tự động cập nhật biểu đồ.
-Thêm `-- --seed` (`npm run simulate -- --seed`) nếu muốn tạo sổ lệnh và giao dịch mẫu (sẽ ghi đè dữ liệu thật).
+## 6. Các bước chạy demo
 
-### 4. Khởi chạy Backend Oracle (nối Firebase với smart contract)
-```bash
-cd contracts
-npm install
-npm run oracle
-```
-Cần file `contracts/.env` (tạo từ `.env.example`, không commit). Hướng dẫn deploy và cấu hình chi tiết: [contracts/README.md](contracts/README.md).
+Contract đã được deploy sẵn trên Sepolia, không cần deploy lại.
 
-## 🔗 Liên kết quan trọng
-- **Mạng thử nghiệm (Testnet)**: Sepolia
-- **Trình khám phá chuỗi (Explorer)**: [Sepolia Etherscan](https://sepolia.etherscan.io/)
-- **P2PEnergyMarket**: [0x23194c35B6de99b3b50A2ee07B817E3bE89cA612](https://sepolia.etherscan.io/address/0x23194c35B6de99b3b50A2ee07B817E3bE89cA612)
-- **SolarToken (SLR)**: [0x3bd3A251021d781Fa6B37d5B97B6A91fd779FDa6](https://sepolia.etherscan.io/address/0x3bd3A251021d781Fa6B37d5B97B6A91fd779FDa6)
-- **DeviceRegistry**: [0xd91b0144388FAd8f341C4F1376Ad6ad15741b1DE](https://sepolia.etherscan.io/address/0xd91b0144388FAd8f341C4F1376Ad6ad15741b1DE)
+1. **Kiểm thử smart contract và backend** (50 test):
+   ```bash
+   cd contracts; npm test
+   ```
+2. **Nguồn dữ liệu IoT:** bật ESP32 (xem [iot_code/README.md](iot_code/README.md)). Nếu không có phần cứng, chạy giả lập
+   (chỉ khi ESP32 đang tắt):
+   ```bash
+   node iot_code/simulator/simulate.mjs
+   ```
+3. **Tầng AI:** bật dịch vụ suy luận ghi `ai_analytics` (xem [ai_model/README.md](ai_model/README.md)). Nếu AI không chạy,
+   oracle tự bỏ qua chốt chặn AI và vẫn hoạt động.
+4. **Backend oracle** (chạy suốt buổi demo, chỉ một máy chạy):
+   ```bash
+   cd contracts; npm run check:sepolia; npm run oracle
+   ```
+5. **Dashboard:** mở https://frontend-silk-two-98.vercel.app (hoặc chạy trên máy: `cd iot_code/frontend; npm run dev`).
+   - *Overview*: số đo ESP32 thời gian thực, trạng thái Online, kết quả AI.
+   - *Energy Market*: kết nối MetaMask (Sepolia), xem số phiên + đếm ngược, đặt lệnh mua nhỏ (ví dụ 0,02 kWh).
+   - Theo dõi log oracle: `[WEB] Nhận lệnh ...` → hết phiên `[CHAIN] matchOrders ... cặp khớp` → `[MQTT] Gửi TRADE_SUCCESS`.
+   - *Transactions*: giao dịch mới kèm link Etherscan; *My Wallet*: ký quỹ, số dư SLR, rút ETH.
+6. **Kiểm chứng on-chain:** mở giao dịch trên Etherscan, xem event `ForecastRecorded` (dataHash, modelHash) và `Matched`.
+
+Chạy toàn bộ trên chain local (không cần Sepolia ETH): xem [contracts/README.md](contracts/README.md#54-chạy-trên-chain-local-hardhat-với-dữ-liệu-esp32-thật).
+
+## 7. Đối chiếu yêu cầu đồ án
+
+| Yêu cầu | Đáp ứng |
+|---|---|
+| Luồng End-to-End IoT → AI → Smart Contract | ESP32 → Firebase → AI (chốt chặn) + oracle → `P2PEnergyMarket` → MQTT về ESP32 |
+| Smart contract on-chain | Solidity, triển khai và verify trên Sepolia, 25 test contract |
+| Kết nối Backend/Frontend bằng ethers.js | Oracle (`contracts/backend`) và dashboard (`iot_code/frontend`) đều dùng ethers.js v6 |
+| Sáng tạo: Edge AI / INT8 | Lượng tử hoá INT8: nhanh ~3,9 lần, nhỏ ~3,4 lần, giữ nguyên R² 92,94% |
+| Sáng tạo: phần cứng IoT thật | ESP32 với cảm biến và relay thật, nhận lệnh từ smart contract |
+| Sáng tạo: giao diện Web3 | Dashboard thời gian thực, MetaMask, truy vết giao dịch qua Etherscan |
+
+## 8. Liên kết
+- Sepolia Etherscan: [P2PEnergyMarket](https://sepolia.etherscan.io/address/0x23194c35B6de99b3b50A2ee07B817E3bE89cA612#code) ·
+  [SolarToken (SLR)](https://sepolia.etherscan.io/address/0x3bd3A251021d781Fa6B37d5B97B6A91fd779FDa6#code) ·
+  [DeviceRegistry](https://sepolia.etherscan.io/address/0xd91b0144388FAd8f341C4F1376Ad6ad15741b1DE#code)
+- Dataset huấn luyện AI: Kaggle *Solar Power Generation Data* (anikannal)
 
 ---
-*Dự án Đồ án môn học - Quản lý và giao dịch năng lượng P2P*
+*Đồ án môn học Cơ sở Blockchain và Ứng dụng — GVHD: Huỳnh Thế Thiện*

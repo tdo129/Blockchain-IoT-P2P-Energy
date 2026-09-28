@@ -3,7 +3,7 @@ const { ethers } = require("ethers");
 const eth = (wei) => Number(ethers.formatEther(wei));
 
 /**
- * Một lần khớp lệnh on-chain -> 2 bản ghi cho nhánh `transactions`, theo schema frontend/src/pages/Transactions.jsx:
+ * Một lần khớp lệnh on-chain -> 2 bản ghi cho nhánh `transactions`, theo schema iot_code/frontend/src/pages/Transactions.jsx:
  * { hash, type: "buy" | "sell", amount_kWh, value_ETH (âm = bị trừ, dương = nhận), block, timestamp, status }.
  * Người mua và người bán mỗi bên một bản ghi, cùng hash của giao dịch matchOrders.
  * Các trường thêm (addr, counterparty, price_ETH, session) frontend chưa đọc nhưng giúp truy vết.

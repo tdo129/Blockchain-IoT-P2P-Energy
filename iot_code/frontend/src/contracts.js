@@ -1,5 +1,5 @@
 // Kết nối frontend với smart contract trên Sepolia.
-// Địa chỉ + ABI đọc từ bản copy trong frontend (Vercel chỉ build folder frontend, không đọc được ../contracts).
+// Địa chỉ + ABI đọc từ bản copy trong frontend (Vercel chỉ build folder iot_code/frontend, không đọc được contracts/).
 // `npm run deploy:sepolia` (folder contracts) ghi cả contracts/deployments/sepolia.json và bản copy này.
 import { ethers } from 'ethers';
 import deployment from './deployments/sepolia.json';

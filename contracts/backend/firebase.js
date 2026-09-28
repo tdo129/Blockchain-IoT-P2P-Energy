@@ -1,4 +1,4 @@
-// Đọc/ghi Firebase Realtime Database qua REST API (rules hiện cho phép đọc/ghi công khai, xem frontend/FIREBASE_SETUP.md)
+// Đọc/ghi Firebase Realtime Database qua REST API (rules hiện cho phép đọc/ghi công khai, xem mục 4 của README gốc)
 const { normalizeReading } = require("./sensor");
 
 async function request(baseUrl, method, path, { query = {}, body } = {}) {
@@ -37,7 +37,7 @@ function createFirebaseClient(baseUrl) {
     /** Kết quả mới nhất của mô hình AI (đọc sensor_data_recent): status, anomaly_detected, predicted_power_w, ... */
     getAiLatest: () => get("ai_analytics/latest"),
 
-    /** Sổ lệnh người dùng đặt trên web: { asks, bids } (mảng do simulate.mjs ghi, hoặc object push key do frontend ghi) */
+    /** Sổ lệnh người dùng đặt trên web: { asks, bids } (mảng do iot_code/simulator/simulate.mjs --seed ghi, hoặc object push key do frontend ghi) */
     getMarket: async () => (await get("market")) || {},
 
     /** Tương đương push() của Firebase SDK mà frontend dùng */

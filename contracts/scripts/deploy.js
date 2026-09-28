@@ -79,9 +79,9 @@ async function main() {
     console.log(`\nĐã ghi ${path.relative(process.cwd(), file)} (địa chỉ + ABI cho backend)`);
   }
 
-  // Frontend đọc bản copy trong frontend/src/deployments: Vercel chỉ build folder frontend nên không import được ../contracts
+  // Frontend đọc bản copy trong iot_code/frontend/src/deployments: Vercel chỉ build folder iot_code/frontend nên không import được contracts/
   if (hre.network.name === "sepolia") {
-    const frontendFile = path.join(__dirname, "..", "..", "frontend", "src", "deployments", "sepolia.json");
+    const frontendFile = path.join(__dirname, "..", "..", "iot_code", "frontend", "src", "deployments", "sepolia.json");
     fs.mkdirSync(path.dirname(frontendFile), { recursive: true });
     fs.writeFileSync(frontendFile, JSON.stringify(deployment, null, 2));
     console.log(`Đã ghi ${path.relative(process.cwd(), frontendFile)} (bản cho frontend, nhớ commit cả hai file)`);

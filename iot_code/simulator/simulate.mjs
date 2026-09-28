@@ -1,28 +1,29 @@
 /**
- * simulate.mjs — Mô phỏng ESP32 (blockchainV2.ino) đẩy dữ liệu cảm biến lên Firebase Realtime Database
- * Chạy: node simulate.mjs            (chỉ dùng khi ESP32 thật KHÔNG chạy, vì ghi vào cùng nhánh dữ liệu)
+ * simulate.mjs — Mô phỏng ESP32 (../blockchainV2/blockchainV2.ino) đẩy dữ liệu cảm biến lên Firebase Realtime Database
+ * Chạy: node iot_code/simulator/simulate.mjs     (chỉ dùng khi ESP32 thật KHÔNG chạy, vì ghi vào cùng nhánh dữ liệu)
  *
- * Giống hệt ESP32, mỗi 15 giây:
- *   POST sensor_data_history          ← lịch sử vĩnh viễn (push key)
- *   PUT  sensor_data_recent/record_N  ← bộ đệm 10 mẫu gần nhất cho AI, N = (sample_id - 1) % 10
+ * Giống hệt ESP32, mỗi 15 giây, qua REST API của Firebase (cùng cách HTTPClient trên ESP32 gọi):
+ *   POST sensor_data_history.json          ← lịch sử vĩnh viễn (Firebase sinh push key)
+ *   PUT  sensor_data_recent/record_N.json  ← bộ đệm 10 mẫu gần nhất cho AI, N = (sample_id - 1) % 10
  * Cùng JSON: { metadata, electrical, environment } (xem blockchainV2.ino, TaskMQTT)
+ * Chỉ cần Node.js 18+ (có sẵn fetch), không cần npm install.
  */
 
-import { initializeApp } from 'firebase/app';
-import { getDatabase, ref, set, push } from 'firebase/database';
-
-// ── Firebase Init ─────────────────────────────────────────────────────────
-const DATABASE_URL = 'https://blockchain-6d10b-default-rtdb.asia-southeast1.firebasedatabase.app/';
-const firebaseConfig = {
-  databaseURL: DATABASE_URL,
-  projectId: 'blockchain-6d10b',
-};
-
-const app = initializeApp(firebaseConfig);
-const db  = getDatabase(app);
+const DATABASE_URL = process.env.FIREBASE_URL || 'https://blockchain-6d10b-default-rtdb.asia-southeast1.firebasedatabase.app';
 
 const SAMPLE_SECONDS = 15; // ESP32: if (now - lastMsg > 15000)
 const RECENT_SIZE    = 10; // ESP32: (sample_id - 1) % 10
+
+// ── Firebase REST ─────────────────────────────────────────────────────────
+async function firebase(method, path, body) {
+  const res = await fetch(`${DATABASE_URL.replace(/\/$/, '')}/${path}.json`, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${method} /${path} → HTTP ${res.status}: ${await res.text()}`);
+  return res.status;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 function rand(min, max, decimals = 2) {
@@ -65,61 +66,56 @@ async function pushData() {
 
   try {
     // 1. Lịch sử dữ liệu vĩnh viễn (POST)
-    await push(ref(db, 'sensor_data_history'), data);
+    const historyCode = await firebase('POST', 'sensor_data_history', data);
     // 2. Bộ đệm 10 mẫu gần nhất cho AI (PUT xoay vòng)
-    await set(ref(db, `sensor_data_recent/record_${recentIndex}`), data);
+    const recentCode = await firebase('PUT', `sensor_data_recent/record_${recentIndex}`, data);
 
     const surplus = +(data.electrical.p_solar - data.electrical.p_load).toFixed(2);
     const state = surplus > 0.05 ? 'SELL' : surplus < -0.05 ? 'BUY' : 'BAL';
     console.log(
-      `[${data.metadata.timestamp}] ✅ #${sampleId} → record_${recentIndex}` +
+      `[${data.metadata.timestamp}] ✅ #${sampleId} → History: ${historyCode} | Recent(record_${recentIndex}): ${recentCode}` +
       ` | Ps: ${data.electrical.p_solar}W | Pl: ${data.electrical.p_load}W | Pdu: ${surplus}W ${state}`
     );
     sampleId++;
   } catch (err) {
-    console.error('❌ Firebase push error:', err.message);
+    console.error('❌ Firebase lỗi:', err.message);
   }
 }
 
-// ── Seed initial market orders ────────────────────────────────────────────
+// ── Seed dữ liệu mẫu cho sổ lệnh / giao dịch (chỉ khi chạy với --seed) ────
 async function seedMarketOrders() {
-  const bids = Array.from({ length: 6 }, (_, i) => ({
-    type:      'bid',
-    price_ETH: parseFloat((0.055 - i * 0.002).toFixed(4)),
-    amount_kWh: rand(50, 300, 1),
-    addr:      `0x${Math.random().toString(16).slice(2, 10)}`,
-    timestamp: Math.floor(Date.now() / 1000) - i * 60,
-    status:    'open',
-  }));
-  const asks = Array.from({ length: 6 }, (_, i) => ({
-    type:      'ask',
-    price_ETH: parseFloat((0.058 + i * 0.002).toFixed(4)),
-    amount_kWh: rand(30, 250, 1),
-    addr:      `0x${Math.random().toString(16).slice(2, 10)}`,
-    timestamp: Math.floor(Date.now() / 1000) - i * 45,
-    status:    'open',
-  }));
+  const now = Math.floor(Date.now() / 1000);
+  const order = (type, i, price, amount) => ({
+    type,
+    price_ETH: price,
+    amount_kWh: amount,
+    addr: `0x${Math.random().toString(16).slice(2, 10)}`, // địa chỉ giả: oracle bỏ qua, không đưa lên chain
+    timestamp: now - i * 60,
+    status: 'open',
+  });
+  const bids = Array.from({ length: 6 }, (_, i) => order('bid', i, +(0.055 - i * 0.002).toFixed(4), rand(50, 300, 1)));
+  const asks = Array.from({ length: 6 }, (_, i) => order('ask', i, +(0.058 + i * 0.002).toFixed(4), rand(30, 250, 1)));
 
   try {
-    await set(ref(db, 'market/bids'), bids);
-    await set(ref(db, 'market/asks'), asks);
+    await firebase('PUT', 'market/bids', bids);
+    await firebase('PUT', 'market/asks', asks);
     console.log('[SEED] ✅ Market orders seeded');
   } catch (err) {
     console.error('[SEED] ❌ Market seed error:', err.message);
   }
 }
 
-// ── Seed transactions ─────────────────────────────────────────────────────
 async function seedTransactions() {
+  const now = Math.floor(Date.now() / 1000);
   const txs = [
-    { hash: '0x3a4b9c1d2e5f8a0b', type: 'buy',  amount_kWh: 145, value_ETH: -0.0572, status: 'success', timestamp: Math.floor(Date.now()/1000) - 300,  block: 18420312 },
-    { hash: '0x8f2e4a0b1c3d9e7f', type: 'sell', amount_kWh: 220, value_ETH: +0.0568, status: 'success', timestamp: Math.floor(Date.now()/1000) - 900,  block: 18420280 },
-    { hash: '0x1c9d3b2a4e6f0d1e', type: 'buy',  amount_kWh: 80,  value_ETH: -0.0460, status: 'success', timestamp: Math.floor(Date.now()/1000) - 1800, block: 18420155 },
-    { hash: '0xfe2d8c1a3b9e6c4f', type: 'sell', amount_kWh: 310, value_ETH: +0.1740, status: 'success', timestamp: Math.floor(Date.now()/1000) - 2700, block: 18420030 },
-    { hash: '0x5b3e7f9a2c1d4b8e', type: 'buy',  amount_kWh: 60,  value_ETH: -0.0348, status: 'pending', timestamp: Math.floor(Date.now()/1000) - 3600, block: 18419992 },
+    { hash: '0x3a4b9c1d2e5f8a0b', type: 'buy',  amount_kWh: 145, value_ETH: -0.0572, status: 'success', timestamp: now - 300,  block: 18420312 },
+    { hash: '0x8f2e4a0b1c3d9e7f', type: 'sell', amount_kWh: 220, value_ETH: +0.0568, status: 'success', timestamp: now - 900,  block: 18420280 },
+    { hash: '0x1c9d3b2a4e6f0d1e', type: 'buy',  amount_kWh: 80,  value_ETH: -0.0460, status: 'success', timestamp: now - 1800, block: 18420155 },
+    { hash: '0xfe2d8c1a3b9e6c4f', type: 'sell', amount_kWh: 310, value_ETH: +0.1740, status: 'success', timestamp: now - 2700, block: 18420030 },
+    { hash: '0x5b3e7f9a2c1d4b8e', type: 'buy',  amount_kWh: 60,  value_ETH: -0.0348, status: 'pending', timestamp: now - 3600, block: 18419992 },
   ];
   try {
-    await set(ref(db, 'transactions'), txs);
+    await firebase('PUT', 'transactions', txs);
     console.log('[SEED] ✅ Transactions seeded');
   } catch (err) {
     console.error('[SEED] ❌ Tx seed error:', err.message);
@@ -132,15 +128,14 @@ console.log(`📡 Firebase: ${DATABASE_URL}`);
 console.log(`⏱  Interval: ${SAMPLE_SECONDS} seconds (giống blockchainV2.ino)`);
 console.log('⚠️  Chỉ chạy khi ESP32 thật đang tắt: cả hai cùng ghi sensor_data_history / sensor_data_recent\n');
 
-// Dữ liệu market/transactions giả chỉ tạo khi chạy `node simulate.mjs --seed`.
+// Dữ liệu market/transactions giả chỉ tạo khi chạy với --seed.
 // Mặc định KHÔNG ghi đè: market/bids|asks là lệnh thật người dùng đặt trên web,
 // transactions là giao dịch thật backend ghi sau khi smart contract khớp lệnh.
 if (process.argv.includes('--seed')) {
   await seedMarketOrders();
   await seedTransactions();
-  setInterval(seedMarketOrders, 20000);
 }
 
-// Push đầu tiên ngay lập tức, sau đó push mỗi 15 giây
+// Push đầu tiên ngay lập tức, sau đó push mỗi 15 giây (--once: chỉ gửi 1 mẫu rồi thoát, để kiểm tra kết nối)
 await pushData();
-setInterval(pushData, SAMPLE_SECONDS * 1000);
+if (!process.argv.includes('--once')) setInterval(pushData, SAMPLE_SECONDS * 1000);
