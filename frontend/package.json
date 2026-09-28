@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "simulate": "node simulate.mjs",
-    "build": "npm install && vite build",
+    "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview"
   },
