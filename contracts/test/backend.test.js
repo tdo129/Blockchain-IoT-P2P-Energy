@@ -3,13 +3,35 @@ const { ethers } = require("ethers");
 const { integrateEnergy, canonicalJson, hashRecords } = require("../backend/energy");
 const { ethToWei, kwhToWh, parseMarketOrders } = require("../backend/orders");
 const { buildTradeRecords } = require("../backend/sync");
+const { pushKeyTime, parseDeviceTime, normalizeReading } = require("../backend/sensor");
 
-// Bản ghi cùng cấu trúc lich_su_do trên Firebase
+// Bản ghi cùng cấu trúc ESP32 (blockchainV2.ino) ghi vào sensor_data_history, sau normalizeReading
 const reading = (timestamp, genW, loadW) => ({
   key: `-key${timestamp}`,
   timestamp,
-  nguon_phat: { cong_suat_W: genW, dien_ap_V: 22, dong_dien_A: genW / 22, dien_nang_san_xuat_kWh: 12 },
-  tai_tieu_thu: { cong_suat_W: loadW, dien_ap_V: 12.5, dong_dien_A: loadW / 12.5, dien_nang_tieu_thu_kWh: 7 },
+  metadata: { sample_id: timestamp - 999, timestamp: "2026-09-28 15:03:14" },
+  electrical: { v_solar: 4.5, i_solar: (genW / 4.5) * 1000, p_solar: genW, v_load: 5, i_load: (loadW / 5) * 1000, p_load: loadW },
+  environment: { irradiance: (genW / 3) * 1000, temp_panel: 45.7, temp_ambient: 37.4 },
+});
+
+describe("Backend - đọc bản ghi ESP32 trên Firebase", function () {
+  it("đọc metadata.timestamp theo giờ Việt Nam (UTC+7)", function () {
+    expect(parseDeviceTime("2026-09-28 15:03:14")).to.equal(Date.UTC(2026, 8, 28, 8, 3, 14) / 1000);
+    expect(parseDeviceTime("N/A")).to.equal(null);
+  });
+
+  it("giải mã thời điểm Firebase nhận bản ghi từ push key", function () {
+    // Push key thật trong sensor_data_history, Firebase nhận lúc 15:03:25 giờ Việt Nam
+    expect(pushKeyTime("-P2b1ZP77h-rqhJ0yVLK")).to.equal(Date.UTC(2026, 8, 28, 8, 3, 25) / 1000);
+    expect(pushKeyTime("record_0")).to.equal(null);
+  });
+
+  it("ESP32 chưa đồng bộ NTP (timestamp N/A) thì lấy thời điểm từ push key", function () {
+    const record = { metadata: { sample_id: 1, timestamp: "N/A" }, electrical: { p_solar: 0.9, p_load: 0.3 } };
+    const r = normalizeReading("-P2b1ZP77h-rqhJ0yVLK", record);
+    expect(r.timestamp).to.equal(pushKeyTime("-P2b1ZP77h-rqhJ0yVLK"));
+    expect(r.electrical).to.deep.equal(record.electrical);
+  });
 });
 
 describe("Backend - tính điện năng từ dữ liệu cảm biến", function () {
@@ -42,10 +64,20 @@ describe("Backend - tính điện năng từ dữ liệu cảm biến", function
   });
 
   it("coi công suất âm hoặc thiếu là 0", function () {
-    const bad = { key: "x", timestamp: 1010, nguon_phat: { cong_suat_W: -50 }, tai_tieu_thu: {} };
+    // ESP32 có lúc đo ra dòng tải âm nhỏ (i_load -0.2 mA)
+    const bad = { key: "x", timestamp: 1010, electrical: { p_solar: -50 } };
     const r = integrateEnergy([reading(1000, 0, 0), bad], 1000, 1010, 30);
     expect(r.generationWh).to.equal(0);
     expect(r.consumptionWh).to.equal(0);
+  });
+
+  it("nhân công suất mô hình với powerScale", function () {
+    // 0.9 W phát, 0.36 W tải trong 600 giây: 0.15 Wh và 0.06 Wh, làm tròn về 0 nếu không quy đổi
+    const records = [0, 300, 600].map((t) => reading(1000 + t, 0.9, 0.36));
+    expect(integrateEnergy(records, 1000, 1600, 300).generationWh).to.equal(0);
+    const r = integrateEnergy(records, 1000, 1600, 300, 1000);
+    expect(r.generationWh).to.equal(150);
+    expect(r.consumptionWh).to.equal(60);
   });
 });
 
@@ -60,7 +92,7 @@ describe("Backend - hash dữ liệu", function () {
     expect(hashRecords("node_01", JSON.parse(JSON.stringify(records)))).to.equal(h1);
 
     const tampered = JSON.parse(JSON.stringify(records));
-    tampered[1].nguon_phat.cong_suat_W = 111;
+    tampered[1].electrical.p_solar = 111;
     expect(hashRecords("node_01", tampered)).to.not.equal(h1);
   });
 });

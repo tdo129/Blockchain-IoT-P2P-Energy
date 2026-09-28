@@ -13,8 +13,13 @@ const network = env.NETWORK || "localhost";
 
 module.exports = {
   root: ROOT,
-  firebaseUrl: (env.FIREBASE_URL || "https://p2p-solar-energy-default-rtdb.firebaseio.com").replace(/\/$/, ""),
+  // Cùng database mà ESP32 (blockchainV2.ino) ghi sensor_data_history / sensor_data_recent
+  firebaseUrl: (env.FIREBASE_URL || "https://blockchain-6d10b-default-rtdb.asia-southeast1.firebasedatabase.app").replace(/\/$/, ""),
   nodeId: env.NODE_ID || "node_01",
+  // Mô hình phần cứng chỉ phát ~1 W: một phiên 10 phút chưa tới 1 Wh, contract (tính theo Wh nguyên) sẽ không có lệnh nào.
+  // Công suất đo được nhân hệ số này trước khi tính điện năng: mặc định 1 W trên mô hình ứng với 1 kW của hộ gia đình.
+  // Đặt 1 để dùng đúng số đo.
+  powerScale: Number(env.POWER_SCALE || 1000),
 
   network,
   // Ghi kết quả khớp lệnh vào `transactions` và đổi status lệnh thành "filled".
@@ -31,9 +36,10 @@ module.exports = {
   nodeBidPriceEth: env.NODE_BID_PRICE_ETH || "0.07",
 
   pollSeconds: Number(env.POLL_SECONDS || 5),
-  // Hai bản ghi cách nhau quá khoảng này thì coi là mất dữ liệu, không tích phân qua khoảng trống
-  maxGapSeconds: Number(env.MAX_GAP_SECONDS || 30),
-  // Node không gửi tín hiệu quá khoảng này thì coi là offline
+  // Hai bản ghi cách nhau quá khoảng này thì coi là mất dữ liệu, không tích phân qua khoảng trống.
+  // ESP32 gửi mỗi 15 giây: 45 giây cho phép lỡ một mẫu.
+  maxGapSeconds: Number(env.MAX_GAP_SECONDS || 45),
+  // Bản ghi mới nhất cũ hơn khoảng này thì coi node là offline (ESP32 gửi mỗi 15 giây)
   nodeStaleSeconds: Number(env.NODE_STALE_SECONDS || 60),
 
   stateFile: path.join(ROOT, "backend", "state.json"),

@@ -1,21 +1,27 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import TopBar from '../components/TopBar';
-import { db, refs, onValue, ref } from '../firebase';
+import { refs, onValue } from '../firebase';
+import { readingsFromSnapshot, tradeState, SAMPLE_SECONDS, STALE_SECONDS } from '../sensor';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, BarChart, Bar,
 } from 'recharts';
-import { Sun, Zap, Battery, TrendingUp, Wifi, Cpu, Cloud, Wind, Thermometer, Droplets } from 'lucide-react';
+import { Sun, Zap, Battery, TrendingUp, Wifi, Cpu, Cloud, Thermometer } from 'lucide-react';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-function rand(a, b, d = 2) { return +(a + Math.random() * (b - a)).toFixed(d); }
+const CHART_POINTS = 15; // 15 bản ghi × 15 giây ≈ 4 phút gần nhất
 
-const aiPreds = [
-  { time: 'Next 1h',  prod: '5.8 kWh',  cons: '2.9 kWh', conf: '94%' },
-  { time: 'Next 3h',  prod: '14.2 kWh', cons: '8.7 kWh', conf: '89%' },
-  { time: 'Next 6h',  prod: '24.5 kWh', cons: '16.2 kWh', conf: '82%' },
-  { time: 'Next 12h', prod: '38.1 kWh', cons: '27.4 kWh', conf: '75%' },
-];
+const fmtClock = (seconds) =>
+  new Date(seconds * 1000).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+const fmt = (value, digits = 2) => (value === undefined || value === null ? '--' : Number(value).toFixed(digits));
+
+// Trạng thái giao dịch theo cùng ngưỡng LCD của ESP32
+const TRADE_LABEL = {
+  SELL: { text: 'SELL · Sẵn sàng bán P2P', className: 'up' },
+  BUY:  { text: 'BUY · Thiếu điện, cần mua', className: 'down' },
+  BAL:  { text: 'BAL · Cân bằng', className: '' },
+};
 
 const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
@@ -35,60 +41,61 @@ const CustomTooltip = ({ active, payload, label }) => {
 };
 
 export default function Overview() {
-  // Latest sensor reading from Firebase
-  const [sensor, setSensor] = useState(null);
+  // Các bản ghi mới nhất ESP32 ghi vào sensor_data_history
+  const [readings, setReadings] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [nodes, setNodes] = useState([]);
-  const [txCount, setTxCount] = useState(47);
-
-  // Chart history (keep last 15 readings)
-  const [chartData, setChartData] = useState([]);
-  const chartRef = useRef([]);
+  const [ai, setAi] = useState(null);
+  const [txToday, setTxToday] = useState(null);
+  // Đồng hồ để trạng thái Online/Offline tự đổi khi ESP32 ngừng gửi
+  const [now, setNow] = useState(() => Date.now() / 1000);
 
   // ── Firebase listeners ─────────────────────────────────────────────────
   useEffect(() => {
-    // 1. Listen sensor/latest
-    const unsubLatest = onValue(refs.sensorLatest(), snap => {
-      if (!snap.exists()) return;
-      const data = snap.val();
-      setSensor(data);
+    // 1. Dữ liệu cảm biến ESP32
+    const unsubHistory = onValue(refs.sensorHistory(CHART_POINTS), snap => {
+      setReadings(readingsFromSnapshot(snap));
       setLoading(false);
-
-      // Append to chart (keep last 15)
-      const label = new Date(data.timestamp * 1000)
-        .toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      const entry = {
-        time:        label,
-        production:  data.nguon_phat?.cong_suat_W ?? 0,
-        consumption: data.tai_tieu_thu?.cong_suat_W ?? 0,
-        surplus:     Math.max(0, (data.nguon_phat?.cong_suat_W ?? 0) - (data.tai_tieu_thu?.cong_suat_W ?? 0)),
-      };
-      chartRef.current = [...chartRef.current.slice(-14), entry];
-      setChartData([...chartRef.current]);
-
-      // Bump tx counter occasionally
-      setTxCount(n => n + (Math.random() > 0.7 ? 1 : 0));
     });
 
-    // 2. Listen iot_nodes
-    const unsubNodes = onValue(refs.nodes(), snap => {
-      if (!snap.exists()) return;
-      const raw = snap.val();
-      setNodes(Object.values(raw));
+    // 2. Kết quả mô hình AI
+    const unsubAi = onValue(refs.aiLatest(), snap => setAi(snap.val()));
+
+    // 3. Số giao dịch trong ngày (mỗi lần khớp có 2 bản ghi bán/mua cùng hash)
+    const unsubTx = onValue(refs.transactions(), snap => {
+      const startOfDay = new Date().setHours(0, 0, 0, 0) / 1000;
+      const hashes = new Set();
+      snap.forEach(child => {
+        const tx = child.val();
+        if (Number(tx?.timestamp) >= startOfDay) hashes.add(tx.hash);
+      });
+      setTxToday(hashes.size);
     });
+
+    const timer = setInterval(() => setNow(Date.now() / 1000), 5000);
 
     return () => {
-      unsubLatest();
-      unsubNodes();
+      unsubHistory();
+      unsubAi();
+      unsubTx();
+      clearInterval(timer);
     };
   }, []);
 
-  // Fallback values
-  const nguon = sensor?.nguon_phat   ?? {};
-  const tai   = sensor?.tai_tieu_thu ?? {};
-  const prodW = nguon.cong_suat_W    ?? 0;
-  const consW = tai.cong_suat_W      ?? 0;
-  const surpW = Math.max(0, prodW - consW);
+  const latest = readings.at(-1);
+  const e      = latest?.electrical  ?? {};
+  const env    = latest?.environment ?? {};
+  const prodW  = Number(e.p_solar ?? 0);
+  const consW  = Number(e.p_load  ?? 0);
+  const surpW  = prodW - consW;
+  const trade  = TRADE_LABEL[tradeState(surpW)];
+  const online = Boolean(latest) && now - latest.time <= STALE_SECONDS;
+  const waiting = loading || !latest;
+
+  const chartData = readings.map(r => {
+    const p = Number(r.electrical?.p_solar ?? 0);
+    const l = Number(r.electrical?.p_load ?? 0);
+    return { time: fmtClock(r.time), production: p, consumption: l, surplus: Math.max(0, +(p - l).toFixed(2)) };
+  });
 
   return (
     <div className="page-enter">
@@ -98,10 +105,10 @@ export default function Overview() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '1.25rem' }}>
         <div className="dot green" />
         <span style={{ fontSize: '0.8rem', color: 'var(--primary)', fontWeight: 600 }}>Firebase Realtime Database</span>
-        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>· Cập nhật mỗi 5 giây từ IoT Simulator</span>
-        {sensor?.timestamp && (
+        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>· ESP32 gửi mỗi {SAMPLE_SECONDS} giây (sensor_data_history)</span>
+        {latest && (
           <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-            Last update: {new Date(sensor.timestamp * 1000).toLocaleTimeString('vi-VN')}
+            Last update: {fmtClock(latest.time)}
           </span>
         )}
       </div>
@@ -110,12 +117,12 @@ export default function Overview() {
       <div className="stats-grid" style={{ marginBottom: '1.5rem' }}>
         <div className="card stat-card green animate-delay-1">
           <div className="stat-label"><div className="stat-icon green"><Sun size={16} /></div>Công suất nguồn phát</div>
-          {loading
-            ? <div style={{ color: 'var(--text-muted)', fontSize: '1.1rem' }}>Đang kết nối...</div>
+          {waiting
+            ? <div style={{ color: 'var(--text-muted)', fontSize: '1.1rem' }}>{loading ? 'Đang kết nối...' : 'Chưa có dữ liệu'}</div>
             : <>
-                <div className="stat-value green">{prodW}<span className="stat-unit"> W</span></div>
+                <div className="stat-value green">{fmt(prodW)}<span className="stat-unit"> W</span></div>
                 <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 4 }}>
-                  {nguon.dien_ap_V}V · {nguon.dong_dien_A}A · {nguon.dien_nang_san_xuat_kWh} kWh/ngày
+                  {fmt(e.v_solar)} V · {fmt(e.i_solar, 1)} mA · INA219 nguồn phát
                 </div>
               </>
           }
@@ -123,12 +130,12 @@ export default function Overview() {
 
         <div className="card stat-card blue animate-delay-2">
           <div className="stat-label"><div className="stat-icon blue"><Zap size={16} /></div>Công suất tiêu thụ</div>
-          {loading
-            ? <div style={{ color: 'var(--text-muted)', fontSize: '1.1rem' }}>Đang kết nối...</div>
+          {waiting
+            ? <div style={{ color: 'var(--text-muted)', fontSize: '1.1rem' }}>{loading ? 'Đang kết nối...' : 'Chưa có dữ liệu'}</div>
             : <>
-                <div className="stat-value blue">{consW}<span className="stat-unit"> W</span></div>
+                <div className="stat-value blue">{fmt(consW)}<span className="stat-unit"> W</span></div>
                 <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 4 }}>
-                  {tai.dien_ap_V}V · {tai.dong_dien_A}A · {tai.dien_nang_tieu_thu_kWh} kWh/ngày
+                  {fmt(e.v_load)} V · {fmt(e.i_load, 1)} mA · INA219 tải tiêu thụ
                 </div>
               </>
           }
@@ -136,19 +143,19 @@ export default function Overview() {
 
         <div className="card stat-card amber animate-delay-3">
           <div className="stat-label"><div className="stat-icon amber"><Battery size={16} /></div>Điện dư thừa P2P</div>
-          {loading
-            ? <div style={{ color: 'var(--text-muted)', fontSize: '1.1rem' }}>Đang kết nối...</div>
+          {waiting
+            ? <div style={{ color: 'var(--text-muted)', fontSize: '1.1rem' }}>{loading ? 'Đang kết nối...' : 'Chưa có dữ liệu'}</div>
             : <>
-                <div className="stat-value amber">+{surpW.toFixed(2)}<span className="stat-unit"> W</span></div>
-                <div className="stat-change up">Sẵn sàng bán P2P</div>
+                <div className="stat-value amber">{surpW >= 0 ? '+' : ''}{surpW.toFixed(2)}<span className="stat-unit"> W</span></div>
+                <div className={`stat-change ${trade.className}`}>{trade.text}</div>
               </>
           }
         </div>
 
         <div className="card stat-card purple animate-delay-4">
           <div className="stat-label"><div className="stat-icon purple"><TrendingUp size={16} /></div>Tx hôm nay</div>
-          <div className="stat-value purple">{txCount}<span className="stat-unit"> tx</span></div>
-          <div className="stat-change up">↑ 12% so với hôm qua</div>
+          <div className="stat-value purple">{txToday ?? '--'}<span className="stat-unit"> tx</span></div>
+          <div className="stat-change">Lần khớp lệnh on-chain</div>
         </div>
       </div>
 
@@ -199,57 +206,63 @@ export default function Overview() {
           }
         </div>
 
-        {/* AI Predictions */}
+        {/* AI Analytics — mô hình AI đọc sensor_data_recent, ghi ai_analytics/latest */}
         <div className="card">
           <div className="chart-title">
-            <div className="chart-title-left"><Cpu size={18} color="var(--purple)" /> AI Forecast (LSTM)</div>
+            <div className="chart-title-left"><Cpu size={18} color="var(--purple)" /> AI Analytics</div>
           </div>
-          <div className="ai-badge"><Cpu size={12} /> Mô hình LSTM · Độ chính xác 89%</div>
-          <div className="prediction-list">
-            {aiPreds.map(p => (
-              <div key={p.time} className="pred-item">
-                <div>
-                  <div className="pred-time">{p.time}</div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 2 }}>
-                    <span className="text-green">↑ {p.prod}</span> / <span className="text-red">↓ {p.cons}</span>
-                  </div>
+          {!ai
+            ? <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Chưa có kết quả từ mô hình AI (ai_analytics/latest)</div>
+            : <>
+                <div className="ai-badge" style={ai.anomaly_detected ? { color: 'var(--danger)' } : undefined}>
+                  <Cpu size={12} /> {ai.status} · {ai.anomaly_detected ? 'Phát hiện bất thường' : 'Hoạt động bình thường'}
                 </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div className="pred-val">{p.conf}</div>
-                  <div className="pred-conf">confidence</div>
+                <div className="prediction-list">
+                  {[
+                    { label: 'Công suất dự đoán',  sub: 'predicted_power_w',      value: `${fmt(ai.predicted_power_w)} W` },
+                    { label: 'Công suất thực tế',  sub: 'actual_power_w',         value: `${fmt(ai.actual_power_w)} W` },
+                    { label: 'Chênh lệch',         sub: 'power_difference_w',     value: `${fmt(ai.power_difference_w)} W` },
+                    { label: 'Độ bám dự đoán',     sub: 'tracking_accuracy_pct',  value: `${fmt(ai.tracking_accuracy_pct, 1)} %` },
+                  ].map(p => (
+                    <div key={p.label} className="pred-item">
+                      <div>
+                        <div className="pred-time">{p.label}</div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 2 }}>{p.sub}</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div className="pred-val">{p.value}</div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              </div>
-            ))}
-          </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 8 }}>
+                  Mẫu #{ai.sample_id} lúc {ai.timestamp} · suy luận lúc {ai.inferred_at ?? ai.inferred_time}
+                </div>
+              </>
+          }
         </div>
       </div>
 
-      {/* ── IoT Node + Weather ── */}
+      {/* ── IoT Node + Môi trường ── */}
       <div className="grid-7-5">
-        {/* Single IoT Node — chi tiết đầy đủ */}
+        {/* ESP32 — số đo điện của 2 cảm biến INA219 */}
         <div className="card">
           <div className="chart-title">
-            <div className="chart-title-left"><Wifi size={18} color="var(--secondary)" /> IoT Node (ESP32 · MQTT)</div>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', color: 'var(--primary)' }}>
-              <div className="dot green" /> Online
+            <div className="chart-title-left"><Wifi size={18} color="var(--secondary)" /> IoT Node (ESP32 · Firebase)</div>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', color: online ? 'var(--primary)' : 'var(--danger)' }}>
+              {online ? <div className="dot green" /> : <div className="dot" style={{ background: 'var(--danger)' }} />}
+              {online ? 'Online' : 'Offline'}
             </span>
           </div>
 
           {(() => {
-            const node = nodes[0];
-            const fallback = {
-              id: 'Node-01', location: 'Solar Panel', online: true,
-              output_kW: '--', voltage_V: '--', current_A: '--',
-              temp_C: '--', humidity: '--', irradiance_Wm2: '--',
-            };
-            const n = node || fallback;
             const metrics = [
-              { label: 'Điện áp (V)',         value: n.voltage_V,       unit: 'V',    icon: Zap,         color: 'var(--primary)' },
-              { label: 'Dòng điện (A)',        value: n.current_A,       unit: 'A',    icon: Zap,         color: 'var(--secondary)' },
-              { label: 'Công suất (kW)',       value: n.output_kW,       unit: 'kW',   icon: Sun,         color: 'var(--accent)' },
-              { label: 'Nhiệt độ module',      value: n.temp_C,          unit: '°C',   icon: Thermometer, color: 'var(--danger)' },
-              { label: 'Độ ẩm',               value: n.humidity,        unit: '%',    icon: Droplets,    color: 'var(--purple)' },
-              { label: 'Bức xạ mặt trời',     value: n.irradiance_Wm2, unit: 'W/m²', icon: Sun,         color: 'var(--amber)' },
+              { label: 'Điện áp phát',   value: fmt(e.v_solar),    unit: 'V',  icon: Zap,     color: 'var(--primary)' },
+              { label: 'Dòng phát',      value: fmt(e.i_solar, 1), unit: 'mA', icon: Zap,     color: 'var(--secondary)' },
+              { label: 'Công suất phát', value: fmt(e.p_solar),    unit: 'W',  icon: Sun,     color: 'var(--accent)' },
+              { label: 'Điện áp tải',    value: fmt(e.v_load),     unit: 'V',  icon: Zap,     color: 'var(--primary)' },
+              { label: 'Dòng tải',       value: fmt(e.i_load, 1),  unit: 'mA', icon: Zap,     color: 'var(--secondary)' },
+              { label: 'Công suất tải',  value: fmt(e.p_load),     unit: 'W',  icon: Battery, color: 'var(--purple)' },
             ];
             return (
               <>
@@ -268,13 +281,15 @@ export default function Overview() {
                     <Wifi size={24} color="#fff" />
                   </div>
                   <div>
-                    <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>{n.id}</div>
-                    <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{n.location}</div>
+                    <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>ESP32 · ESP_P2P</div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                      Solar Panel · mẫu #{latest?.metadata?.sample_id ?? '--'}
+                    </div>
                   </div>
                   <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Last seen</div>
-                    <div style={{ fontSize: '0.85rem', color: 'var(--primary)' }}>
-                      {n.last_seen ? new Date(n.last_seen * 1000).toLocaleTimeString('vi-VN') : 'N/A'}
+                    <div style={{ fontSize: '0.85rem', color: online ? 'var(--primary)' : 'var(--danger)' }}>
+                      {latest ? fmtClock(latest.time) : 'N/A'}
                     </div>
                   </div>
                 </div>
@@ -301,17 +316,17 @@ export default function Overview() {
           })()}
         </div>
 
-        {/* Weather + mini chart */}
+        {/* Môi trường: DHT11, DS18B20 và bức xạ ESP32 ước tính từ công suất phát */}
         <div className="card">
           <div className="chart-title">
-            <div className="chart-title-left"><Cloud size={18} color="var(--secondary)" /> Điều Kiện Thời Tiết</div>
+            <div className="chart-title-left"><Cloud size={18} color="var(--secondary)" /> Điều Kiện Môi Trường</div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
             {[
-              { label: 'Nhiệt độ',      value: '32°C',     icon: Sun  },
-              { label: 'Mây che phủ',   value: '15%',      icon: Cloud },
-              { label: 'Tốc độ gió',    value: '12 km/h',  icon: Wind },
-              { label: 'UV Index',      value: '8 / High', icon: Zap  },
+              { label: 'Nhiệt độ môi trường', value: `${fmt(env.temp_ambient, 1)} °C`, icon: Thermometer },
+              { label: 'Nhiệt độ tấm pin',    value: `${fmt(env.temp_panel, 1)} °C`,   icon: Thermometer },
+              { label: 'Bức xạ (ước tính)',   value: `${fmt(env.irradiance, 0)} W/m²`, icon: Sun },
+              { label: 'Trạng thái LCD',      value: latest ? tradeState(surpW) : '--', icon: Zap },
             ].map(w => (
               <div key={w.label} style={{
                 background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)',

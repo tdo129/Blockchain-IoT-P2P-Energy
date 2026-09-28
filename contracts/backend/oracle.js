@@ -1,5 +1,5 @@
 // Backend oracle: Firebase <-> P2PEnergyMarket
-//  - Đầu phiên: dữ liệu đo của node IoT -> điện năng -> dự báo -> submitOffer/submitBid
+//  - Đầu phiên: dữ liệu đo của ESP32 (sensor_data_history) -> điện năng -> dự báo -> submitOffer/submitBid
 //  - Trong phiên: lệnh người dùng đặt trên frontend (market/asks, market/bids) -> submitManualOffer/submitManualBid
 //  - Hết phiên: matchOrders -> ghi kết quả vào `transactions`, đổi status lệnh đã khớp hết thành "filled"
 // Chạy: npm run oracle   (cần deploy trước, xem README)
@@ -93,7 +93,7 @@ async function main() {
 
   const nodeWallet = cfg.nodeWallet || (await (await provider.getSigner(2)).getAddress());
   const sessionDuration = Number(await market.sessionDuration());
-  // Đủ bản ghi phủ một phiên, giả định thiết bị gửi tối đa 1 bản ghi / 2 giây
+  // Đủ bản ghi phủ một phiên (ESP32 gửi 15 giây / bản ghi, lấy dư theo mức 2 giây / bản ghi)
   const historyLimit = Math.min(Math.ceil(sessionDuration / 2) + 20, 5000);
 
   log("=== BACKEND ORACLE P2P ENERGY ===");
@@ -102,6 +102,7 @@ async function main() {
   log(`Market contract : ${deployment.P2PEnergyMarket.address}`);
   log(`Oracle          : ${oracleAddress}`);
   log(`Node ${cfg.nodeId} thuộc ví: ${nodeWallet}`);
+  log(`Dữ liệu IoT     : sensor_data_history (ESP32), công suất x${cfg.powerScale}`);
   log(`Mô hình dự báo  : ${MODEL_ID} (${modelHash})`);
   log(`Độ dài phiên    : ${sessionDuration} giây`);
 
@@ -145,27 +146,31 @@ function logOnce(ctx, session, key, message) {
 
 /** Lệnh tự động từ node IoT: lịch sử đo -> tích phân điện năng -> dự báo -> submitOffer/submitBid */
 async function submitNodeOrder({ firebase, market, modelHash, nodeWallet, sessionDuration, historyLimit }, session) {
-  const node = await firebase.getNode(cfg.nodeId);
+  const history = await firebase.getLatestReadings(historyLimit);
   const now = nowSeconds();
 
-  if (!node || !node.online || now - Number(node.last_seen) > cfg.nodeStaleSeconds) {
-    log(`[IoT] ${cfg.nodeId} offline hoặc mất tín hiệu (last_seen=${node?.last_seen}), bỏ qua lệnh tự động phiên này`);
+  // ESP32 không ghi trạng thái online riêng: node còn sống nếu bản ghi mới nhất đủ mới
+  const latest = history.at(-1);
+  if (!latest || now - latest.timestamp > cfg.nodeStaleSeconds) {
+    const lastSeen = latest ? fmtTime(latest.timestamp) : "chưa có dữ liệu";
+    log(`[IoT] ESP32 offline hoặc mất tín hiệu (bản ghi cuối: ${lastSeen}), bỏ qua lệnh tự động phiên này`);
     return;
   }
+  const { electrical: e = {}, environment: env = {}, metadata = {} } = latest;
   log(
-    `[IoT] ${node.id} online | ${node.voltage_V} V, ${node.current_A} A, ${node.output_kW} kW | ` +
-      `${node.temp_C} °C, ${node.humidity} %RH, ${node.irradiance_Wm2} W/m²`
+    `[IoT] ESP32 online, mẫu #${metadata.sample_id} lúc ${metadata.timestamp} | ` +
+      `phát ${e.v_solar} V ${e.i_solar} mA ${e.p_solar} W | tải ${e.v_load} V ${e.i_load} mA ${e.p_load} W | ` +
+      `tấm pin ${env.temp_panel} °C, môi trường ${env.temp_ambient} °C, ${env.irradiance} W/m²`
   );
 
-  const history = await firebase.getLatestHistory(historyLimit);
-  const measured = integrateEnergy(history, now - sessionDuration, now, cfg.maxGapSeconds);
+  const measured = integrateEnergy(history, now - sessionDuration, now, cfg.maxGapSeconds, cfg.powerScale);
   if (measured.records.length < 2) {
     log(`[IoT] Không đủ dữ liệu đo trong ${sessionDuration} giây qua, bỏ qua lệnh tự động`);
     return;
   }
   log(
     `[IoT] ${measured.records.length} bản ghi, phủ ${measured.coveredSeconds} giây: ` +
-      `phát ${measured.generationWh} Wh, tiêu thụ ${measured.consumptionWh} Wh`
+      `phát ${measured.generationWh} Wh, tiêu thụ ${measured.consumptionWh} Wh (công suất x${cfg.powerScale})`
   );
 
   const forecast = await forecastNextSession({ measured });

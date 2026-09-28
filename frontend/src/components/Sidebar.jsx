@@ -51,7 +51,7 @@ export default function Sidebar() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0 0.25rem' }}>
           <Wifi size={14} color="var(--text-muted)" />
           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-            IoT: 6 Nodes Online
+            IoT: 1 node ESP32
           </span>
         </div>
       </div>

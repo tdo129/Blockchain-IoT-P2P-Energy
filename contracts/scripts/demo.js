@@ -12,31 +12,31 @@ const fmtSLR = (raw) => `${ethers.formatUnits(raw, 3)} SLR`;
 
 const MODEL_ID = "naive-persistence-v1";
 
-// sensor   = bản ghi đo (cùng cấu trúc lich_su_do trên Firebase), chỉ hash được đưa lên chain
+// sensor   = bản ghi đo (cùng cấu trúc ESP32 ghi vào sensor_data_history trên Firebase), chỉ hash được đưa lên chain
 // forecast = điện năng dự báo cho phiên tới
 // priceEth = giá giới hạn (ETH/kWh): giá sàn nếu bán, giá trần nếu mua
 const households = [
   {
     name: "Hộ A",
-    sensor: { nguon_phat: { dien_ap_V: 23.4, dong_dien_A: 7.8, cong_suat_W: 182.5 }, tai_tieu_thu: { dien_ap_V: 12.5, dong_dien_A: 10.4, cong_suat_W: 130.0 }, timestamp: 1790000000 },
+    sensor: { metadata: { sample_id: 1, timestamp: "2026-09-28 15:00:00" }, electrical: { v_solar: 23.4, i_solar: 7800, p_solar: 182.5, v_load: 12.5, i_load: 10400, p_load: 130.0 } },
     forecast: { generationWh: 1800, consumptionWh: 1300 },
     priceEth: "0.05",
   },
   {
     name: "Hộ B",
-    sensor: { nguon_phat: { dien_ap_V: 22.9, dong_dien_A: 5.2, cong_suat_W: 119.1 }, tai_tieu_thu: { dien_ap_V: 12.8, dong_dien_A: 7.0, cong_suat_W: 89.6 }, timestamp: 1790000000 },
+    sensor: { metadata: { sample_id: 1, timestamp: "2026-09-28 15:00:00" }, electrical: { v_solar: 22.9, i_solar: 5200, p_solar: 119.1, v_load: 12.8, i_load: 7000, p_load: 89.6 } },
     forecast: { generationWh: 1200, consumptionWh: 900 },
     priceEth: "0.055",
   },
   {
     name: "Hộ C",
-    sensor: { nguon_phat: { dien_ap_V: 21.8, dong_dien_A: 1.8, cong_suat_W: 39.2 }, tai_tieu_thu: { dien_ap_V: 12.3, dong_dien_A: 8.1, cong_suat_W: 99.6 }, timestamp: 1790000000 },
+    sensor: { metadata: { sample_id: 1, timestamp: "2026-09-28 15:00:00" }, electrical: { v_solar: 21.8, i_solar: 1800, p_solar: 39.2, v_load: 12.3, i_load: 8100, p_load: 99.6 } },
     forecast: { generationWh: 400, consumptionWh: 1000 },
     priceEth: "0.07",
   },
   {
     name: "Hộ D",
-    sensor: { nguon_phat: { dien_ap_V: 20.9, dong_dien_A: 1.2, cong_suat_W: 25.1 }, tai_tieu_thu: { dien_ap_V: 12.1, dong_dien_A: 4.1, cong_suat_W: 49.6 }, timestamp: 1790000000 },
+    sensor: { metadata: { sample_id: 1, timestamp: "2026-09-28 15:00:00" }, electrical: { v_solar: 20.9, i_solar: 1200, p_solar: 25.1, v_load: 12.1, i_load: 4100, p_load: 49.6 } },
     forecast: { generationWh: 250, consumptionWh: 500 },
     priceEth: "0.045",
   },

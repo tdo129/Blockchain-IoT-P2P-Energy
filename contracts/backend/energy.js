@@ -4,9 +4,10 @@ const power = (value) => Math.max(0, Number(value) || 0);
 
 /**
  * Tính điện năng phát/tiêu thụ trong cửa sổ [fromTs, toTs] bằng cách tích phân công suất theo thời gian
- * (quy tắc hình thang). Không dùng dien_nang_*_kWh vì dữ liệu hiện tại không cộng dồn.
+ * (quy tắc hình thang). ESP32 chỉ gửi công suất tức thời electrical.p_solar / p_load (W), không gửi điện năng cộng dồn.
+ * powerScale: hệ số quy đổi công suất mô hình thu nhỏ ra công suất hộ gia đình (xem POWER_SCALE trong config.js).
  */
-function integrateEnergy(records, fromTs, toTs, maxGapSeconds) {
+function integrateEnergy(records, fromTs, toTs, maxGapSeconds, powerScale = 1) {
   const inWindow = records
     .filter((r) => r.timestamp >= fromTs && r.timestamp <= toTs)
     .sort((a, b) => a.timestamp - b.timestamp);
@@ -21,8 +22,8 @@ function integrateEnergy(records, fromTs, toTs, maxGapSeconds) {
     const dt = cur.timestamp - prev.timestamp;
     if (dt <= 0 || dt > maxGapSeconds) continue;
 
-    generationJ += ((power(prev.nguon_phat?.cong_suat_W) + power(cur.nguon_phat?.cong_suat_W)) / 2) * dt;
-    consumptionJ += ((power(prev.tai_tieu_thu?.cong_suat_W) + power(cur.tai_tieu_thu?.cong_suat_W)) / 2) * dt;
+    generationJ += ((power(prev.electrical?.p_solar) + power(cur.electrical?.p_solar)) / 2) * powerScale * dt;
+    consumptionJ += ((power(prev.electrical?.p_load) + power(cur.electrical?.p_load)) / 2) * powerScale * dt;
     coveredSeconds += dt;
   }
 

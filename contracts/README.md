@@ -5,7 +5,7 @@ Folder này không sửa gì trong `frontend/`; nó đọc và ghi đúng các n
 
 ```
 ESP32 / simulate.mjs ──► Firebase ◄──────────────── frontend (React)
-                           │  ▲                         │ đọc: tram_hien_tai, iot_nodes,
+                           │  ▲                         │ đọc: sensor_data_history, ai_analytics,
                            │  │                         │      market, transactions
                đọc sensor, │  │ ghi transactions,       │ ghi: market/bids|asks (khi đặt lệnh)
                market      ▼  │ status "filled"
@@ -26,6 +26,7 @@ ESP32 / simulate.mjs ──► Firebase ◄────────────�
 | `contracts/DeviceRegistry.sol` | Ánh xạ ví với thiết bị IoT |
 | `backend/oracle.js` | Vòng lặp oracle (`npm run oracle`) |
 | `backend/firebase.js` | Đọc/ghi Firebase qua REST API |
+| `backend/sensor.js` | Đọc bản ghi ESP32 (`blockchainV2.ino`): thời điểm đo từ `metadata.timestamp` hoặc push key |
 | `backend/energy.js` | Tích phân công suất ra Wh, hash dữ liệu cảm biến |
 | `backend/orders.js` | Đọc lệnh `market/bids`, `market/asks` |
 | `backend/sync.js` | Tạo bản ghi `transactions` theo schema `Transactions.jsx` |
@@ -50,10 +51,14 @@ ESP32 / simulate.mjs ──► Firebase ◄────────────�
 | Đặt lệnh mua (Energy Market) | Thiếu ký quỹ thì frontend gọi `deposit()` phần còn thiếu trước khi ghi lệnh |
 | Phiên đấu giá (Energy Market) | Frontend đọc `currentSession()`, `sessionDeadline()` để đếm ngược |
 | Sổ lệnh | Backend ghi lệnh tự động của node vào `market/asks/iot_node_01` (`source: "iot"`), gỡ khi hết phiên |
-| `iot_nodes/node_01`, `lich_su_do` | Lệnh tự động của node: kiểm tra online, tích phân `cong_suat_W` |
+| `sensor_data_history` (ESP32 POST mỗi 15 giây) | Lệnh tự động của node: bản ghi mới nhất quá `NODE_STALE_SECONDS` thì coi là offline; tích phân `electrical.p_solar` / `p_load` × `POWER_SCALE` ra Wh |
 
 Frontend lấy địa chỉ + ABI từ `deployments/sepolia.json` (xem `frontend/src/contracts.js`), nên deploy lại
 thì frontend tự dùng contract mới; nhớ commit file này.
+
+Mô hình phần cứng chỉ phát khoảng 1 W, một phiên 10 phút chưa tới 1 Wh nên contract (tính theo Wh nguyên) sẽ
+không nhận lệnh nào. Backend nhân công suất đo được với `POWER_SCALE` (mặc định 1000: 1 W trên mô hình ứng với
+1 kW của hộ gia đình) trước khi tính điện năng; `dataHash` vẫn là hash của đúng bản ghi gốc trên Firebase.
 
 Backend chỉ ghi Firebase khi chạy trên Sepolia (hoặc đặt `FIREBASE_WRITE=true`): frontend tạo link
 `sepolia.etherscan.io/tx/<hash>`, nên hash của mạng local sẽ là link hỏng.

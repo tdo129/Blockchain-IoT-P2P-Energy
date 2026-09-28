@@ -1,4 +1,6 @@
 // Đọc/ghi Firebase Realtime Database qua REST API (rules hiện cho phép đọc/ghi công khai, xem frontend/FIREBASE_SETUP.md)
+const { normalizeReading } = require("./sensor");
+
 async function request(baseUrl, method, path, { query = {}, body } = {}) {
   const params = new URLSearchParams(query).toString();
   const url = `${baseUrl}/${path}.json${params ? `?${params}` : ""}`;
@@ -18,18 +20,17 @@ function createFirebaseClient(baseUrl) {
   const get = (path, query) => request(baseUrl, "GET", path, { query });
 
   return {
-    /** Trạng thái node IoT: online, last_seen, temp_C, irradiance_Wm2, ... */
-    getNode: (nodeId) => get(`iot_nodes/${nodeId}`),
-
     /**
-     * N bản ghi lịch sử mới nhất, sắp theo thời gian.
-     * Lọc theo $key vì push key của Firebase tăng theo thời gian;
-     * lọc theo "timestamp" bị từ chối do database chưa khai báo .indexOn.
+     * N bản ghi cảm biến mới nhất ESP32 POST vào sensor_data_history, sắp theo thời điểm đo.
+     * Lọc theo $key vì push key do Firebase sinh tăng theo thời gian nhận
+     * (metadata.timestamp là chuỗi nên không dùng orderBy được, và database cũng chưa khai báo .indexOn).
+     * Không đọc sensor_data_recent: bộ đệm xoay vòng theo sample_id bị lẫn mẫu cũ khi ESP32 khởi động lại.
      */
-    getLatestHistory: async (limit) => {
-      const data = await get("lich_su_do", { orderBy: '"$key"', limitToLast: String(limit) });
+    getLatestReadings: async (limit) => {
+      const data = await get("sensor_data_history", { orderBy: '"$key"', limitToLast: String(limit) });
       return Object.entries(data || {})
-        .map(([key, record]) => ({ key, ...record }))
+        .map(([key, record]) => normalizeReading(key, record))
+        .filter((r) => r.timestamp !== null)
         .sort((a, b) => a.timestamp - b.timestamp);
     },
 

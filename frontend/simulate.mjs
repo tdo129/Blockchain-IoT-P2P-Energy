@@ -1,104 +1,81 @@
 /**
- * simulate.mjs — Mô phỏng dữ liệu IoT đẩy lên Firebase Realtime Database
- * Chạy: node simulate.mjs
+ * simulate.mjs — Mô phỏng ESP32 (blockchainV2.ino) đẩy dữ liệu cảm biến lên Firebase Realtime Database
+ * Chạy: node simulate.mjs            (chỉ dùng khi ESP32 thật KHÔNG chạy, vì ghi vào cùng nhánh dữ liệu)
  *
- * Tương đương logic Python:
- *   nguon_phat: điện áp/dòng điện/công suất nguồn mặt trời
- *   tai_tieu_thu: điện áp/dòng điện/công suất tải tiêu thụ
+ * Giống hệt ESP32, mỗi 15 giây:
+ *   POST sensor_data_history          ← lịch sử vĩnh viễn (push key)
+ *   PUT  sensor_data_recent/record_N  ← bộ đệm 10 mẫu gần nhất cho AI, N = (sample_id - 1) % 10
+ * Cùng JSON: { metadata, electrical, environment } (xem blockchainV2.ino, TaskMQTT)
  */
 
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, set, push } from 'firebase/database';
 
 // ── Firebase Init ─────────────────────────────────────────────────────────
+const DATABASE_URL = 'https://blockchain-6d10b-default-rtdb.asia-southeast1.firebasedatabase.app/';
 const firebaseConfig = {
-  databaseURL: 'https://p2p-solar-energy-default-rtdb.firebaseio.com/',
-  projectId: 'p2p-solar-energy',
+  databaseURL: DATABASE_URL,
+  projectId: 'blockchain-6d10b',
 };
 
 const app = initializeApp(firebaseConfig);
 const db  = getDatabase(app);
+
+const SAMPLE_SECONDS = 15; // ESP32: if (now - lastMsg > 15000)
+const RECENT_SIZE    = 10; // ESP32: (sample_id - 1) % 10
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 function rand(min, max, decimals = 2) {
   return parseFloat((Math.random() * (max - min) + min).toFixed(decimals));
 }
 
-/** Mô phỏng giá trị cảm biến giống ESP32/Raspberry Pi */
+/** "YYYY-MM-DD HH:MM:SS" theo giờ Việt Nam, như strftime sau configTime(UTC+7) của ESP32 */
+function vnTimestamp(date = new Date()) {
+  return new Date(date.getTime() + 7 * 3600 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+}
+
+let sampleId = 1; // ESP32 đếm lại từ 1 mỗi lần khởi động
+
+/** Số đo cùng thang với mô hình phần cứng: tấm pin nhỏ ~4.4 V, tải 5 V */
 function generateSensorData() {
-  // Nguồn phát (Pin mặt trời)
-  const dien_ap_nguon  = rand(18.5, 24.5, 2);   // V — điện áp hở mạch panel
-  const dong_dien_nguon = rand(2.0, 8.5, 3);     // A — dòng phát thực tế
-  const cong_suat_nguon = parseFloat((dien_ap_nguon * dong_dien_nguon).toFixed(2)); // W
-
-  // Tải tiêu thụ
-  const dien_ap_tai    = rand(11.5, 13.8, 2);    // V — điện áp DC tải
-  const dong_dien_tai  = rand(1.0, 6.0, 3);      // A — dòng tiêu thụ
-  const cong_suat_tai  = parseFloat((dien_ap_tai * dong_dien_tai).toFixed(2)); // W
+  // INA219 0x40 — nguồn phát
+  const v_solar = rand(4.2, 4.6, 2);        // V
+  const i_solar = rand(100, 220, 1);        // mA
+  const p_solar = +(v_solar * i_solar / 1000).toFixed(2); // W
+  // INA219 0x41 — tải tiêu thụ (quạt/LED qua relay 1)
+  const v_load  = rand(4.95, 5.2, 2);       // V
+  const i_load  = rand(0, 90, 1);           // mA
+  const p_load  = +(v_load * i_load / 1000).toFixed(2);   // W
 
   return {
-    nguon_phat: {
-      dien_ap_V:               dien_ap_nguon,
-      dong_dien_A:             dong_dien_nguon,
-      cong_suat_W:             cong_suat_nguon,
-      dien_nang_san_xuat_kWh:  rand(10.0, 15.0, 2),
-    },
-    tai_tieu_thu: {
-      dien_ap_V:               dien_ap_tai,
-      dong_dien_A:             dong_dien_tai,
-      cong_suat_W:             cong_suat_tai,
-      dien_nang_tieu_thu_kWh:  rand(5.0, 10.0, 2),
-    },
-    timestamp: Math.floor(Date.now() / 1000),
-  };
-}
-
-/** Sinh dữ liệu 1 IoT node (ESP32/Raspberry Pi thực tế) */
-function generateIotNodes() {
-  const dien_ap  = rand(18.5, 24.5, 1);
-  const dong_dien = rand(1.5, 8.0, 2);
-  return {
-    node_01: {
-      id:        'Node-01',
-      location:  'Solar Panel',
-      online:    true,
-      output_kW: parseFloat((dien_ap * dong_dien / 1000).toFixed(3)),
-      voltage_V: dien_ap,
-      current_A: dong_dien,
-      temp_C:    rand(28, 55, 1),
-      humidity:  rand(40, 85, 1),
-      irradiance_Wm2: rand(400, 1000, 0),
-      last_seen: Math.floor(Date.now() / 1000),
+    metadata: { sample_id: sampleId, timestamp: vnTimestamp() },
+    electrical: { v_solar, i_solar, p_solar, v_load, i_load, p_load },
+    environment: {
+      irradiance:   +((p_solar / 3.0) * 1000).toFixed(1), // ESP32 ước tính từ công suất phát, tấm 3 W
+      temp_panel:   rand(42, 47, 1),                      // DS18B20
+      temp_ambient: rand(34, 40, 1),                      // DHT11
     },
   };
 }
 
-/** Đẩy một bản ghi lên Firebase */
+/** Đẩy một bản ghi lên Firebase, giống TaskMQTT của ESP32 */
 async function pushData() {
-  const data     = generateSensorData();
-  const nodes    = generateIotNodes();
-  const nowMs    = Date.now();
+  const data = generateSensorData();
+  const recentIndex = (sampleId - 1) % RECENT_SIZE;
 
   try {
-    // 1. Ghi latest (luôn ghi đè — web app đọc path này)
-    await set(ref(db, 'tram_hien_tai'), data);
+    // 1. Lịch sử dữ liệu vĩnh viễn (POST)
+    await push(ref(db, 'sensor_data_history'), data);
+    // 2. Bộ đệm 10 mẫu gần nhất cho AI (PUT xoay vòng)
+    await set(ref(db, `sensor_data_recent/record_${recentIndex}`), data);
 
-    // 2. Ghi vào history (append — để vẽ chart và train AI)
-    const histRef = ref(db, 'lich_su_do');
-    await push(histRef, data);
-
-    // 3. Ghi IoT nodes
-    await set(ref(db, 'iot_nodes'), nodes);
-
-    const surplus = parseFloat(
-      (data.nguon_phat.cong_suat_W - data.tai_tieu_thu.cong_suat_W).toFixed(2)
-    );
+    const surplus = +(data.electrical.p_solar - data.electrical.p_load).toFixed(2);
+    const state = surplus > 0.05 ? 'SELL' : surplus < -0.05 ? 'BUY' : 'BAL';
     console.log(
-      `[${new Date().toISOString()}] ✅ Pushed  |` +
-      ` Nguồn: ${data.nguon_phat.cong_suat_W}W` +
-      ` | Tải: ${data.tai_tieu_thu.cong_suat_W}W` +
-      ` | Dư thừa: ${surplus}W`
+      `[${data.metadata.timestamp}] ✅ #${sampleId} → record_${recentIndex}` +
+      ` | Ps: ${data.electrical.p_solar}W | Pl: ${data.electrical.p_load}W | Pdu: ${surplus}W ${state}`
     );
+    sampleId++;
   } catch (err) {
     console.error('❌ Firebase push error:', err.message);
   }
@@ -106,7 +83,6 @@ async function pushData() {
 
 // ── Seed initial market orders ────────────────────────────────────────────
 async function seedMarketOrders() {
-  const ordersRef = ref(db, 'orders');
   const bids = Array.from({ length: 6 }, (_, i) => ({
     type:      'bid',
     price_ETH: parseFloat((0.055 - i * 0.002).toFixed(4)),
@@ -151,9 +127,10 @@ async function seedTransactions() {
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────
-console.log('🌞 SolarP2P IoT Simulator Starting...');
-console.log('📡 Firebase: https://p2p-solar-energy-default-rtdb.firebaseio.com/');
-console.log('⏱  Interval: 5 seconds\n');
+console.log('🌞 SolarP2P ESP32 Simulator Starting...');
+console.log(`📡 Firebase: ${DATABASE_URL}`);
+console.log(`⏱  Interval: ${SAMPLE_SECONDS} seconds (giống blockchainV2.ino)`);
+console.log('⚠️  Chỉ chạy khi ESP32 thật đang tắt: cả hai cùng ghi sensor_data_history / sensor_data_recent\n');
 
 // Dữ liệu market/transactions giả chỉ tạo khi chạy `node simulate.mjs --seed`.
 // Mặc định KHÔNG ghi đè: market/bids|asks là lệnh thật người dùng đặt trên web,
@@ -164,6 +141,6 @@ if (process.argv.includes('--seed')) {
   setInterval(seedMarketOrders, 20000);
 }
 
-// Push đầu tiên ngay lập tức, sau đó push mỗi 5 giây
+// Push đầu tiên ngay lập tức, sau đó push mỗi 15 giây
 await pushData();
-setInterval(pushData, 5000);
+setInterval(pushData, SAMPLE_SECONDS * 1000);

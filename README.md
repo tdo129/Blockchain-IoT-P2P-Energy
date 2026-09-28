@@ -14,7 +14,7 @@ Dự án Hệ thống quản lý và giao dịch năng lượng mặt trời P2P
 - **Frontend**: React.js (Vite), Tailwind CSS (hoặc custom CSS hiện đại), Recharts, Lucide-react.
 - **Blockchain**: ethers.js v6, Mạng thử nghiệm Sepolia, Ví MetaMask.
 - **Backend / Database**: Firebase Realtime Database (Lưu trữ trạng thái các thiết bị IoT và lịch sử giao dịch).
-- **Phần cứng (IoT Simulator)**: Node.js mô phỏng tín hiệu MQTT/HTTP từ ESP32/Raspberry Pi.
+- **Phần cứng (IoT)**: ESP32 (`blockchainV2.ino`) đo INA219 nguồn phát/tải, DHT11, DS18B20, ghi Firebase mỗi 15 giây; `simulate.mjs` mô phỏng cùng định dạng khi không có phần cứng.
 
 ## 📂 Cấu trúc dự án
 
@@ -28,8 +28,9 @@ Blockchain-IoT-P2P-Energy/
 │   │   ├── contracts.js        # Kết nối smart contract (địa chỉ + ABI từ contracts/deployments)
 │   │   └── firebase.js         # Cấu hình Firebase
 │   ├── FIREBASE_SETUP.md       # Hướng dẫn setup Firebase
-│   ├── simulate.mjs            # Script mô phỏng IoT gửi dữ liệu lên Firebase
+│   ├── simulate.mjs            # Mô phỏng ESP32 gửi dữ liệu lên Firebase (cùng định dạng blockchainV2.ino)
 │   └── package.json            # Các thư viện phụ thuộc
+├── blockchainV2.ino            # Firmware ESP32: đo cảm biến, ghi Firebase, nhận lệnh MQTT
 ├── contracts/                  # Tầng Blockchain (xem contracts/README.md)
 │   ├── contracts/              # Smart contract Solidity: P2PEnergyMarket, SolarToken (SLR), DeviceRegistry
 │   ├── backend/                # Backend oracle: Firebase <-> smart contract
@@ -63,13 +64,15 @@ npm run dev
 ```
 Trình duyệt sẽ mở tại `http://localhost:5174` (hoặc cổng tương tự).
 
-### 3. Khởi chạy Mô phỏng IoT phần cứng
-Mở một terminal khác và chạy script đẩy dữ liệu cảm biến:
+### 3. Nguồn dữ liệu IoT
+ESP32 nạp `blockchainV2.ino` tự ghi dữ liệu lên Firebase
+`https://blockchain-6d10b-default-rtdb.asia-southeast1.firebasedatabase.app/` mỗi 15 giây.
+Khi không có phần cứng (và chỉ khi ESP32 đang tắt), mở một terminal khác và chạy script mô phỏng:
 ```bash
 cd frontend
 npm run simulate
 ```
-Dữ liệu sẽ được đẩy liên tục lên Firebase mỗi 5 giây, giao diện Web sẽ tự động cập nhật biểu đồ và sổ lệnh thị trường.
+Dữ liệu được đẩy lên Firebase mỗi 15 giây (giống ESP32), giao diện Web tự động cập nhật biểu đồ.
 Thêm `-- --seed` (`npm run simulate -- --seed`) nếu muốn tạo sổ lệnh và giao dịch mẫu (sẽ ghi đè dữ liệu thật).
 
 ### 4. Khởi chạy Backend Oracle (nối Firebase với smart contract)
